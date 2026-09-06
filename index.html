@@ -1,13 +1,111 @@
-Transforme este projeto em um aplicativo de entregas.
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
 
-Objetivo:
-- Importar arquivo CSV da Shopee.
-- Ler endereço de cada entrega.
-- Mostrar lista organizada de entregas.
-- Exibir quantidade total de pacotes.
-- Criar botão "Abrir no Waze".
-- Interface moderna para celular.
-- Cores laranja e branco.
-- Preparado para futuras funções de mapa.
+<title>Copiloto Entregas</title>
 
-Gere todo o HTML, CSS e JavaScript em um único arquivo index.html.
+<style>
+body{
+    margin:0;
+    background:#f5f5f5;
+    font-family:Arial,sans-serif;
+}
+
+header{
+    background:#ff6a00;
+    color:white;
+    text-align:center;
+    padding:18px;
+    font-size:24px;
+    font-weight:bold;
+}
+
+.container{
+    padding:20px;
+}
+
+.card{
+    background:white;
+    border-radius:15px;
+    padding:20px;
+    box-shadow:0 3px 12px rgba(0,0,0,.1);
+}
+
+button{
+    width:100%;
+    padding:16px;
+    border:none;
+    border-radius:12px;
+    background:#ff6a00;
+    color:white;
+    font-size:18px;
+    margin-top:15px;
+}
+
+#arquivo{
+    width:100%;
+    margin-top:15px;
+}
+</style>
+</head>
+
+<body>
+
+<header>
+🚚 Copiloto Entregas
+</header>
+
+<div class="container">
+
+<div class="card">
+
+<h2>Importar CSV Shopee</h2>
+
+<input type="file" id="arquivo" accept=".csv">
+
+<p id="resultado">
+Nenhum arquivo carregado.
+</p>
+
+<button onclick="lerCSV()">
+Importar Rota
+</button>
+
+</div>
+
+</div>
+
+<script>
+function lerCSV(){
+
+const arquivo =
+document.getElementById("arquivo").files[0];
+
+if(!arquivo){
+alert("Selecione um CSV");
+return;
+}
+
+const leitor = new FileReader();
+
+leitor.onload = function(e){
+
+const texto = e.target.result;
+
+const linhas = texto.split("\n");
+
+document.getElementById("resultado")
+.innerHTML =
+"Pacotes encontrados: " + (linhas.length - 1);
+
+};
+
+leitor.readAsText(arquivo);
+
+}
+</script>
+
+</body>
+</html>
