@@ -4,49 +4,104 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 
-<title>Copiloto Entregas</title>
+<title>Copiloto Entregas V2</title>
+
+<script src="https://cdn.jsdelivr.net/npm/xlsx/dist/xlsx.full.min.js"></script>
 
 <style>
 body{
-    margin:0;
-    background:#f5f5f5;
-    font-family:Arial,sans-serif;
+margin:0;
+font-family:Arial,sans-serif;
+background:#f4f4f4;
 }
 
 header{
-    background:#ff6a00;
-    color:white;
-    text-align:center;
-    padding:18px;
-    font-size:24px;
-    font-weight:bold;
+background:#ff6a00;
+color:white;
+padding:18px;
+text-align:center;
+font-size:24px;
+font-weight:bold;
 }
 
 .container{
-    padding:20px;
+padding:15px;
 }
 
 .card{
-    background:white;
-    border-radius:15px;
-    padding:20px;
-    box-shadow:0 3px 12px rgba(0,0,0,.1);
+background:white;
+padding:15px;
+border-radius:12px;
+margin-bottom:15px;
+box-shadow:0 2px 10px rgba(0,0,0,.1);
+}
+
+.stats{
+display:grid;
+grid-template-columns:1fr 1fr;
+gap:10px;
+margin-top:10px;
+}
+
+.stat{
+background:#fff3eb;
+padding:10px;
+border-radius:10px;
+text-align:center;
+}
+
+input[type=file]{
+width:100%;
+margin-top:10px;
 }
 
 button{
-    width:100%;
-    padding:16px;
-    border:none;
-    border-radius:12px;
-    background:#ff6a00;
-    color:white;
-    font-size:18px;
-    margin-top:15px;
+width:100%;
+padding:14px;
+border:none;
+border-radius:10px;
+background:#ff6a00;
+color:white;
+font-size:16px;
+margin-top:10px;
 }
 
-#arquivo{
-    width:100%;
-    margin-top:15px;
+.entrega{
+background:white;
+padding:12px;
+border-radius:10px;
+margin-bottom:10px;
+box-shadow:0 1px 6px rgba(0,0,0,.08);
+}
+
+.titulo{
+font-weight:bold;
+font-size:17px;
+margin-bottom:5px;
+}
+
+.codigo{
+font-size:13px;
+color:#555;
+word-break:break-all;
+}
+
+.endereco{
+margin-top:6px;
+font-size:14px;
+}
+
+.waze{
+margin-top:10px;
+background:#00b7ff;
+}
+
+.extra{
+border-left:6px solid red;
+}
+
+.stop{
+border-left:6px solid #ff6a00;
 }
 </style>
 </head>
@@ -61,50 +116,167 @@ button{
 
 <div class="card">
 
-<h2>Importar CSV Shopee</h2>
+<h3>Importar Rota Shopee</h3>
 
-<input type="file" id="arquivo" accept=".csv">
+<input type="file" id="arquivo" accept=".xlsx,.xls">
 
-<p id="resultado">
-Nenhum arquivo carregado.
-</p>
-
-<button onclick="lerCSV()">
+<button onclick="importarExcel()">
 Importar Rota
 </button>
 
+<div class="stats">
+
+<div class="stat">
+<div>Pacotes</div>
+<h2 id="pacotes">0</h2>
 </div>
+
+<div class="stat">
+<div>Extras</div>
+<h2 id="extras">0</h2>
+</div>
+
+</div>
+
+</div>
+
+<div id="lista"></div>
 
 </div>
 
 <script>
-function lerCSV(){
+
+function importarExcel(){
 
 const arquivo =
 document.getElementById("arquivo").files[0];
 
 if(!arquivo){
-alert("Selecione um CSV");
+alert("Selecione a planilha");
 return;
 }
 
-const leitor = new FileReader();
+const reader = new FileReader();
 
-leitor.onload = function(e){
+reader.onload = function(e){
 
-const texto = e.target.result;
+const data = new Uint8Array(e.target.result);
 
-const linhas = texto.split("\n");
+const workbook =
+XLSX.read(data,{type:'array'});
 
-document.getElementById("resultado")
-.innerHTML =
-"Pacotes encontrados: " + (linhas.length - 1);
+const sheet =
+workbook.Sheets[
+workbook.SheetNames[0]
+];
+
+const json =
+XLSX.utils.sheet_to_json(sheet);
+
+mostrarEntregas(json);
 
 };
 
-leitor.readAsText(arquivo);
+reader.readAsArrayBuffer(arquivo);
 
 }
+
+function mostrarEntregas(dados){
+
+let html = "";
+
+let extras = 0;
+
+document.getElementById("pacotes")
+.innerText = dados.length;
+
+dados.forEach(item=>{
+
+const stop =
+item.Stop || item.stop || "-";
+
+const codigo =
+item["SPX TN"] ||
+item["SPX_TN"] ||
+"-";
+
+const endereco =
+item["Destination Address"] ||
+item["Address"] ||
+"-";
+
+const lat =
+item.Latitude;
+
+const lng =
+item.Longitude;
+
+let titulo = "";
+
+let classe = "stop";
+
+if(
+stop === "-" ||
+stop === "" ||
+stop == null
+){
+extras++;
+titulo = "⭐ Extra";
+classe = "extra";
+}else{
+titulo = "📍 Parada " + stop;
+}
+
+html += `
+
+<div class="entrega ${classe}">
+
+<div class="titulo">
+${titulo}
+</div>
+
+<div class="codigo">
+${codigo}
+</div>
+
+<div class="endereco">
+${endereco}
+</div>
+
+<button
+class="waze"
+onclick="abrirWaze('${lat}','${lng}')">
+Abrir no Waze
+</button>
+
+</div>
+
+`;
+
+});
+
+document.getElementById("extras")
+.innerText = extras;
+
+document.getElementById("lista")
+.innerHTML = html;
+
+}
+
+function abrirWaze(lat,lng){
+
+if(!lat || !lng){
+alert("Latitude ou Longitude não encontrada.");
+return;
+}
+
+window.open(
+`https://waze.com/ul?ll=${lat},${lng}&navigate=yes`,
+'_blank'
+);
+
+}
+
 </script>
 
 </body>
