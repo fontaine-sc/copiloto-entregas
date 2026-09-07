@@ -2,11 +2,12 @@
 <html lang="pt-BR" translate="no">
 
 <head>
+
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <meta name="google" content="notranslate">
 
-<title>Copiloto Entregas V2</title>
+<title>Copiloto Entregas V3.1</title>
 
 <script src="https://cdn.jsdelivr.net/npm/xlsx/dist/xlsx.full.min.js"></script>
 
@@ -53,9 +54,14 @@ border-radius:12px;
 text-align:center;
 }
 
+input[type=file]{
+width:100%;
+margin-top:10px;
+}
+
 button{
 width:100%;
-padding:15px;
+padding:14px;
 border:none;
 border-radius:10px;
 font-size:16px;
@@ -73,56 +79,69 @@ background:#00b7ff;
 color:white;
 }
 
-.entrega{
+.toggle{
+background:#e9e9e9;
+color:#333;
+}
+
+.grupo{
 background:white;
-padding:12px;
+padding:15px;
 border-radius:12px;
 margin-bottom:12px;
-box-shadow:0 1px 6px rgba(0,0,0,.1);
-}
-
-.extra{
-border-left:6px solid red;
-}
-
-.stop{
+box-shadow:0 1px 6px rgba(0,0,0,.08);
 border-left:6px solid #ff6a00;
 }
 
-.titulo{
-font-size:20px;
-font-weight:bold;
-margin-bottom:5px;
-}
-
-.codigo{
-color:#666;
-margin-bottom:8px;
-word-break:break-word;
-}
-
 .endereco{
-font-size:16px;
+margin-top:8px;
+font-size:15px;
 line-height:1.4;
 }
 
-input[type=file]{
-width:100%;
+.badge{
+display:inline-block;
+margin-top:10px;
+padding:6px 10px;
+border-radius:8px;
+background:#fff3cd;
+font-weight:bold;
+}
+
+.pacotes{
+display:none;
 margin-top:10px;
 }
 
+.pacote{
+padding:10px;
+border-top:1px solid #eee;
+}
+
+.codigo{
+font-weight:bold;
+word-break:break-word;
+}
+
+.detalhe{
+font-size:14px;
+color:#555;
+margin-top:4px;
+}
+
 </style>
+
 </head>
 
 <body translate="no">
 
-<header translate="no">
+<header>
 🚚 Copiloto Entregas
 </header>
 
 <div class="container">
 
-<div class="card" translate="no">
+<div class="card">
 
 <h2>Importar Rota Shopee</h2>
 
@@ -139,14 +158,14 @@ Importar Rota
 
 <div class="stats">
 
-<div class="stat" translate="no">
+<div class="stat">
 <div>Pacotes</div>
 <h2 id="pacotes">0</h2>
 </div>
 
-<div class="stat" translate="no">
-<div>Extras</div>
-<h2 id="extras">0</h2>
+<div class="stat">
+<div>Locais</div>
+<h2 id="locais">0</h2>
 </div>
 
 </div>
@@ -165,8 +184,10 @@ const arquivo =
 document.getElementById("arquivo").files[0];
 
 if(!arquivo){
+
 alert("Selecione a planilha");
 return;
+
 }
 
 const reader = new FileReader();
@@ -190,110 +211,95 @@ XLSX.utils.sheet_to_json(sheet);
 mostrarEntregas(json);
 
 };
-
 reader.readAsArrayBuffer(arquivo);
 
 }
 
 function mostrarEntregas(dados){
 
-let html = "";
-let extras = 0;
-
 document.getElementById("pacotes").innerText =
 dados.length;
 
-const contadorParadas = {};
+const grupos = {};
 
 dados.forEach(item=>{
-
-const stop =
-item.Stop || item.stop || "-";
-
-const codigo =
-item["SPX TN"] ||
-item["SPX_TN"] ||
-"-";
 
 const endereco =
 item["Destination Address"] ||
 item["Address"] ||
 "-";
 
+const codigo =
+item["SPX TN"] ||
+item["SPX_TN"] ||
+"-";
+
 const lat =
-item.Latitude;
+item["Latitude"] ||
+"";
 
 const lng =
-item.Longitude;
+item["Longitude"] ||
+"";
 
-let titulo = "";
-let classe = "stop";
+const chave =
 
-if(
-stop === "-" ||
-stop === "" ||
-stop == null
-){
+(lat && lng)
 
-extras++;
-titulo = "⭐ Extra";
-classe = "extra";
+? lat + "|" + lng
 
-}else{
+: endereco;
 
-if(!contadorParadas[stop]){
-contadorParadas[stop] = 0;
-}
+if(!grupos[chave]){
 
-contadorParadas[stop]++;
+grupos[chave] = {
 
-const letras = [
-"",
-"A",
-"B",
-"C",
-"D",
-"E",
-"F",
-"G",
-"H",
-"I",
-"J"
-];
+endereco:endereco,
+lat:lat,
+lng:lng,
+pacotes:[]
 
-const sufixo =
-letras[
-contadorParadas[stop]-1
-] || "";
-
-titulo =
-"📍 Parada " +
-stop +
-sufixo;
+};
 
 }
 
-html += `
+grupos[chave].pacotes.push({
 
-<div class="entrega ${classe}" translate="no">
+codigo:codigo,
+endereco:endereco
 
-<div class="titulo">
-${titulo}
-</div>
+});
+
+});
+
+const lista =
+document.getElementById("lista");
+
+lista.innerHTML = "";
+
+const locais =
+Object.values(grupos);
+
+document.getElementById("locais")
+.innerText = locais.length;
+
+locais.forEach((grupo,index)=>{
+
+let htmlPacotes = "";
+
+grupo.pacotes.forEach(pacote=>{
+
+htmlPacotes += `
+
+<div class="pacote">
 
 <div class="codigo">
-${codigo}
+${pacote.codigo}
 </div>
 
-<div class="endereco">
-${endereco}
+<div class="detalhe">
+${pacote.endereco}
 </div>
-
-<button
-class="waze"
-onclick="abrirWaze('${lat}','${lng}')">
-Abrir no Waze
-</button>
 
 </div>
 
@@ -301,11 +307,72 @@ Abrir no Waze
 
 });
 
-document.getElementById("extras")
-.innerText = extras;
+lista.innerHTML += `
 
-document.getElementById("lista")
-.innerHTML = html;
+<div class="grupo">
+
+<h3>
+📍 Local ${index+1}
+</h3>
+
+<div class="endereco">
+${grupo.endereco}
+</div>
+
+<div class="badge">
+${grupo.pacotes.length}
+pacote(s) neste local
+</div>
+
+<button
+class="toggle"
+onclick="alternarPacotes(${index})">
+Mostrar pacotes
+</button>
+
+<div
+id="pacotes_${index}"
+class="pacotes">
+
+${htmlPacotes}
+
+</div>
+
+<button
+class="waze"
+onclick="
+abrirWaze(
+'${grupo.lat}',
+'${grupo.lng}'
+)">
+Abrir no Waze</button>
+
+</div>
+
+`;
+
+});
+function alternarPacotes(index){
+
+const elemento =
+document.getElementById(
+"pacotes_" + index
+);
+
+if(
+elemento.style.display ===
+"block"
+){
+
+elemento.style.display =
+"none";
+
+}else{
+
+elemento.style.display =
+"block";
+
+}
 
 }
 
@@ -331,4 +398,5 @@ window.open(
 </script>
 
 </body>
+
 </html>
