@@ -1,199 +1,15 @@
-<!DOCTYPE html>
-<html lang="pt-BR">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-
-<title>Copiloto Entregas V2</title>
-
-<script src="https://cdn.jsdelivr.net/npm/xlsx/dist/xlsx.full.min.js"></script>
-
-<style>
-body{
-margin:0;
-font-family:Arial,sans-serif;
-background:#f4f4f4;
-}
-
-header{
-background:#ff6a00;
-color:white;
-padding:18px;
-text-align:center;
-font-size:24px;
-font-weight:bold;
-}
-
-.container{
-padding:15px;
-}
-
-.card{
-background:white;
-padding:15px;
-border-radius:12px;
-margin-bottom:15px;
-box-shadow:0 2px 10px rgba(0,0,0,.1);
-}
-
-.stats{
-display:grid;
-grid-template-columns:1fr 1fr;
-gap:10px;
-margin-top:10px;
-}
-
-.stat{
-background:#fff3eb;
-padding:10px;
-border-radius:10px;
-text-align:center;
-}
-
-input[type=file]{
-width:100%;
-margin-top:10px;
-}
-
-button{
-width:100%;
-padding:14px;
-border:none;
-border-radius:10px;
-background:#ff6a00;
-color:white;
-font-size:16px;
-margin-top:10px;
-}
-
-.entrega{
-background:white;
-padding:12px;
-border-radius:10px;
-margin-bottom:10px;
-box-shadow:0 1px 6px rgba(0,0,0,.08);
-}
-
-.titulo{
-font-weight:bold;
-font-size:17px;
-margin-bottom:5px;
-}
-
-.codigo{
-font-size:13px;
-color:#555;
-word-break:break-all;
-}
-
-.endereco{
-margin-top:6px;
-font-size:14px;
-}
-
-.waze{
-margin-top:10px;
-background:#00b7ff;
-}
-
-.extra{
-border-left:6px solid red;
-}
-
-.stop{
-border-left:6px solid #ff6a00;
-}
-</style>
-</head>
-
-<body>
-
-<header>
-🚚 Copiloto Entregas
-</header>
-
-<div class="container">
-
-<div class="card">
-
-<h3>Importar Rota Shopee</h3>
-
-<input type="file" id="arquivo" accept=".xlsx,.xls">
-
-<button onclick="importarExcel()">
-Importar Rota
-</button>
-
-<div class="stats">
-
-<div class="stat">
-<div>Pacotes</div>
-<h2 id="pacotes">0</h2>
-</div>
-
-<div class="stat">
-<div>Extras</div>
-<h2 id="extras">0</h2>
-</div>
-
-</div>
-
-</div>
-
-<div id="lista"></div>
-
-</div>
-
-<script>
-
-function importarExcel(){
-
-const arquivo =
-document.getElementById("arquivo").files[0];
-
-if(!arquivo){
-alert("Selecione a planilha");
-return;
-}
-
-const reader = new FileReader();
-
-reader.onload = function(e){
-
-const data = new Uint8Array(e.target.result);
-
-const workbook =
-XLSX.read(data,{type:'array'});
-
-const sheet =
-workbook.Sheets[
-workbook.SheetNames[0]
-];
-
-const json =
-XLSX.utils.sheet_to_json(sheet);
-
-mostrarEntregas(json);
-
-};
-
-reader.readAsArrayBuffer(arquivo);
-
-}
-
 function mostrarEntregas(dados){
 
 let html = "";
-
 let extras = 0;
 
-document.getElementById("pacotes")
-.innerText = dados.length;
+document.getElementById("pacotes").innerText = dados.length;
+
+let contagemParadas = {};
 
 dados.forEach(item=>{
 
-const stop =
-item.Stop || item.stop || "-";
+const stop = item.Stop || item.stop || "-";
 
 const codigo =
 item["SPX TN"] ||
@@ -205,26 +21,35 @@ item["Destination Address"] ||
 item["Address"] ||
 "-";
 
-const lat =
-item.Latitude;
-
-const lng =
-item.Longitude;
+const lat = item.Latitude;
+const lng = item.Longitude;
 
 let titulo = "";
-
 let classe = "stop";
 
-if(
-stop === "-" ||
-stop === "" ||
-stop == null
-){
+if(stop === "-" || stop === "" || stop == null){
+
 extras++;
 titulo = "⭐ Extra";
 classe = "extra";
+
 }else{
-titulo = "📍 Parada " + stop;
+
+if(!contagemParadas[stop]){
+contagemParadas[stop] = 0;
+}
+
+contagemParadas[stop]++;
+
+const letras = [
+"",
+"A","B","C","D","E","F","G","H","I","J"
+];
+
+const sufixo =
+letras[contagemParadas[stop]] || "";
+
+titulo = `📍 Parada ${stop}${sufixo}`;
 }
 
 html += `
@@ -255,29 +80,7 @@ Abrir no Waze
 
 });
 
-document.getElementById("extras")
-.innerText = extras;
-
-document.getElementById("lista")
-.innerHTML = html;
+document.getElementById("extras").innerText = extras;
+document.getElementById("lista").innerHTML = html;
 
 }
-
-function abrirWaze(lat,lng){
-
-if(!lat || !lng){
-alert("Latitude ou Longitude não encontrada.");
-return;
-}
-
-window.open(
-`https://waze.com/ul?ll=${lat},${lng}&navigate=yes`,
-'_blank'
-);
-
-}
-
-</script>
-
-</body>
-</html>
