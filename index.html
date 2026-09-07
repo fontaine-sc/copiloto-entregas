@@ -1,15 +1,211 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+<title>Copiloto Entregas V2</title>
+
+<script src="https://cdn.jsdelivr.net/npm/xlsx/dist/xlsx.full.min.js"></script>
+
+<style>
+
+body{
+margin:0;
+font-family:Arial,sans-serif;
+background:#f4f4f4;
+}
+
+header{
+background:#ff6a00;
+color:white;
+padding:20px;
+text-align:center;
+font-size:28px;
+font-weight:bold;
+}
+
+.container{
+padding:15px;
+}
+
+.card{
+background:white;
+padding:15px;
+border-radius:15px;
+margin-bottom:15px;
+box-shadow:0 2px 10px rgba(0,0,0,.1);
+}
+
+.stats{
+display:grid;
+grid-template-columns:1fr 1fr;
+gap:10px;
+margin-top:15px;
+}
+
+.stat{
+background:#fff3eb;
+padding:12px;
+border-radius:12px;
+text-align:center;
+}
+
+button{
+width:100%;
+padding:15px;
+border:none;
+border-radius:10px;
+font-size:16px;
+margin-top:10px;
+cursor:pointer;
+}
+
+.importar{
+background:#ff6a00;
+color:white;
+}
+
+.waze{
+background:#00b7ff;
+color:white;
+}
+
+.entrega{
+background:white;
+padding:12px;
+border-radius:12px;
+margin-bottom:12px;
+box-shadow:0 1px 6px rgba(0,0,0,.1);
+}
+
+.extra{
+border-left:6px solid red;
+}
+
+.stop{
+border-left:6px solid #ff6a00;
+}
+
+.titulo{
+font-size:20px;
+font-weight:bold;
+margin-bottom:5px;
+}
+
+.codigo{
+color:#666;
+margin-bottom:8px;
+}
+
+.endereco{
+font-size:16px;
+line-height:1.4;
+}
+
+input[type=file]{
+width:100%;
+margin-top:10px;
+}
+
+</style>
+</head>
+
+<body>
+
+<header>
+🚚 Copiloto Entregas
+</header>
+
+<div class="container">
+
+<div class="card">
+
+<h2>Importar Rota Shopee</h2>
+
+<input
+type="file"
+id="arquivo"
+accept=".xlsx,.xls">
+
+<button
+class="importar"
+onclick="importarExcel()">
+Importar Rota
+</button>
+
+<div class="stats">
+
+<div class="stat">
+<div>Pacotes</div>
+<h2 id="pacotes">0</h2>
+</div>
+
+<div class="stat">
+<div>Extras</div>
+<h2 id="extras">0</h2>
+</div>
+
+</div>
+
+</div>
+
+<div id="lista"></div>
+
+</div>
+
+<script>
+
+function importarExcel(){
+
+const arquivo =
+document.getElementById("arquivo").files[0];
+
+if(!arquivo){
+alert("Selecione a planilha");
+return;
+}
+
+const reader = new FileReader();
+
+reader.onload = function(e){
+
+const data =
+new Uint8Array(e.target.result);
+
+const workbook =
+XLSX.read(data,{type:'array'});
+
+const sheet =
+workbook.Sheets[
+workbook.SheetNames[0]
+];
+
+const json =
+XLSX.utils.sheet_to_json(sheet);
+
+mostrarEntregas(json);
+
+};
+
+reader.readAsArrayBuffer(arquivo);
+
+}
+
 function mostrarEntregas(dados){
 
 let html = "";
 let extras = 0;
 
-document.getElementById("pacotes").innerText = dados.length;
+document.getElementById("pacotes").innerText =
+dados.length;
 
-let contagemParadas = {};
+const contadorParadas = {};
 
 dados.forEach(item=>{
 
-const stop = item.Stop || item.stop || "-";
+const stop =
+item.Stop || item.stop || "-";
 
 const codigo =
 item["SPX TN"] ||
@@ -21,13 +217,20 @@ item["Destination Address"] ||
 item["Address"] ||
 "-";
 
-const lat = item.Latitude;
-const lng = item.Longitude;
+const lat =
+item.Latitude;
+
+const lng =
+item.Longitude;
 
 let titulo = "";
 let classe = "stop";
 
-if(stop === "-" || stop === "" || stop == null){
+if(
+stop === "-" ||
+stop === "" ||
+stop == null
+){
 
 extras++;
 titulo = "⭐ Extra";
@@ -35,6 +238,97 @@ classe = "extra";
 
 }else{
 
+if(!contadorParadas[stop]){
+contadorParadas[stop] = 0;
+}
+
+contadorParadas[stop]++;
+
+const letras = [
+"",
+"A",
+"B",
+"C",
+"D",
+"E",
+"F",
+"G",
+"H",
+"I",
+"J"
+];
+
+const sufixo =
+letras[
+contadorParadas[stop]-1
+] || "";
+
+titulo =
+"📍 Parada " +
+stop +
+sufixo;
+
+}
+
+html += `
+
+<div class="entrega ${classe}">
+
+<div class="titulo">
+${titulo}
+</div>
+
+<div class="codigo">
+${codigo}
+</div>
+
+<div class="endereco">
+${endereco}
+</div>
+
+<button
+class="waze"
+onclick="abrirWaze('${lat}','${lng}')">
+Abrir no Waze
+</button>
+
+</div>
+
+`;
+
+});
+
+document.getElementById("extras")
+.innerText = extras;
+
+document.getElementById("lista")
+.innerHTML = html;
+
+}
+
+function abrirWaze(lat,lng){
+
+if(!lat || !lng){
+
+alert(
+"Latitude ou Longitude não encontrada."
+);
+
+return;
+
+}
+
+window.open(
+`https://waze.com/ul?ll=${lat},${lng}&navigate=yes`,
+'_blank'
+);
+
+}
+
+</script>
+
+</body>
+</html>
 if(!contagemParadas[stop]){
 contagemParadas[stop] = 0;
 }
