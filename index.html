@@ -223,6 +223,16 @@ dados.length;
 
 const grupos = {};
 
+/*
+  Regra de agrupamento:
+  - Stops como 1, 1A e 1B ficam juntos SOMENTE quando
+    possuem o mesmo endereço/coordenadas.
+  - Stops diferentes continuam separados quando o endereço
+    ou as coordenadas forem diferentes.
+  - Linhas sem Stop são Extras e são agrupadas pelo endereço/
+    coordenadas.
+*/
+
 dados.forEach(item=>{
 
 const endereco =
@@ -243,38 +253,54 @@ const lng =
 item["Longitude"] ||
 "";
 
-const chave =
-
-(lat && lng)
-
-? lat + "|" + lng
-
-: endereco;
 const stopOriginal =
 item["Stop"] ||
 item["stop"] ||
 "";
 
-grupos[chave] = {
+const stopTexto = String(stopOriginal).trim();
 
+/* Remove somente a letra final do Stop para obter a parada-base.
+   Ex.: 1A -> 1, 1B -> 1, 12A -> 12. */
+const paradaBase = stopTexto
+.replace(/[A-Za-z]$/,"")
+.trim();
+
+/*
+  Coordenadas são a melhor identificação de local quando existem.
+  Quando não existem, usamos o endereço.
+*/
+const localChave = (lat && lng)
+? String(lat).trim() + "|" + String(lng).trim()
+: String(endereco).trim().toLowerCase();
+
+/*
+  Stops com a mesma parada-base só podem ser unidos quando
+  representam o mesmo local.
+*/
+const chave = stopTexto
+? "STOP|" + paradaBase + "|" + localChave
+: "EXTRA|" + localChave;
+
+if(!grupos[chave]){
+
+grupos[chave] = {
 endereco:endereco,
 lat:lat,
 lng:lng,
-stop:stopOriginal,
+stop:paradaBase,
 pacotes:[]
-
 };
 
-const stop =
-item["Stop"] ||
-item["stop"] ||
-"";
+}
 
 grupos[chave].pacotes.push({
 
 codigo:codigo,
 endereco:endereco,
-stop:stop
+stop:stopTexto
+
+});
 
 });
 
@@ -289,6 +315,7 @@ Object.values(grupos);
 
 document.getElementById("locais")
 .innerText = locais.length;
+
 
 locais.forEach((grupo,index)=>{
 
@@ -314,12 +341,13 @@ ${pacote.endereco}
 
 });
 
+
 lista.innerHTML += `
 
 <div class="grupo">
 
 <h3>
-${grupo.stop ? "📍 Parada " + grupo.stop.replace(/[A-Z]$/,'') : "⭐ Extra"}
+${grupo.stop ? "📍 Parada " + grupo.stop : "⭐ Extra"}
 </h3>
 
 <div class="endereco">
@@ -359,6 +387,7 @@ Abrir no Waze</button>
 `;
 
 });
+
 }
 function alternarPacotes(index){
 
