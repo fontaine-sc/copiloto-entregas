@@ -183,7 +183,6 @@ function importarExcel(){
 const arquivo =
 document.getElementById("arquivo").files[0];
 
-alert("Arquivo selecionado");
   
 if(!arquivo){
 
@@ -251,28 +250,34 @@ const chave =
 ? lat + "|" + lng
 
 : endereco;
-
-if(!grupos[chave]){
+const stopOriginal =
+item["Stop"] ||
+item["stop"] ||
+"";
 
 grupos[chave] = {
 
 endereco:endereco,
 lat:lat,
 lng:lng,
+stop:stopOriginal,
 pacotes:[]
 
 };
 
-}
+const stop =
+item["Stop"] ||
+item["stop"] ||
+"";
 
 grupos[chave].pacotes.push({
 
 codigo:codigo,
-endereco:endereco
+endereco:endereco,
+stop:stop
 
 });
 
-});
 
 const lista =
 document.getElementById("lista");
@@ -314,7 +319,7 @@ lista.innerHTML += `
 <div class="grupo">
 
 <h3>
-📍 Local ${index+1}
+${grupo.stop ? "📍 Parada " + grupo.stop.replace(/[A-Z]$/,'') : "⭐ Extra"}
 </h3>
 
 <div class="endereco">
