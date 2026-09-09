@@ -7,9 +7,11 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <meta name="google" content="notranslate">
 
-<title>Copiloto Entregas V3.1</title>
+<title>Copiloto Entregas V6</title>
 
 <script src="https://cdn.jsdelivr.net/npm/xlsx/dist/xlsx.full.min.js"></script>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css" />
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
 
 <style>
 
@@ -17,6 +19,7 @@ body{
 margin:0;
 font-family:Arial,sans-serif;
 background:#f4f4f4;
+padding-bottom:30px;
 }
 
 header{
@@ -54,6 +57,34 @@ border-radius:12px;
 text-align:center;
 }
 
+.stat h2{
+margin:4px 0 0 0;
+}
+
+.stat.entregue-cor{ background:#e8f8ee; }
+.stat.pendente-cor{ background:#fff3eb; }
+.stat.ocorrencia-cor{ background:#fdeaea; }
+
+.barra-progresso{
+margin-top:15px;
+background:#eee;
+border-radius:20px;
+overflow:hidden;
+height:18px;
+}
+
+.barra-progresso-fill{
+height:100%;
+background:#2ecc71;
+width:0%;
+transition:width .3s ease;
+text-align:center;
+font-size:11px;
+color:white;
+line-height:18px;
+white-space:nowrap;
+}
+
 input[type=file]{
 width:100%;
 margin-top:10px;
@@ -84,6 +115,27 @@ background:#e9e9e9;
 color:#333;
 }
 
+.toggle-mapa{
+background:#333;
+color:white;
+}
+
+.btn-linha{
+display:flex;
+gap:8px;
+margin-top:10px;
+}
+
+.btn-linha button{
+margin-top:0;
+padding:12px 6px;
+font-size:13px;
+}
+
+.entregue-btn{ background:#2ecc71; color:white; }
+.ocorrencia-btn{ background:#e74c3c; color:white; }
+.desfazer-btn{ background:#ccc; color:#333; }
+
 .grupo{
 background:white;
 padding:15px;
@@ -91,6 +143,16 @@ border-radius:12px;
 margin-bottom:12px;
 box-shadow:0 1px 6px rgba(0,0,0,.08);
 border-left:6px solid #ff6a00;
+transition:opacity .2s ease;
+}
+
+.grupo.status-entregue{
+border-left-color:#2ecc71;
+opacity:.7;
+}
+
+.grupo.status-ocorrencia{
+border-left-color:#e74c3c;
 }
 
 .endereco{
@@ -106,6 +168,27 @@ padding:6px 10px;
 border-radius:8px;
 background:#fff3cd;
 font-weight:bold;
+}
+
+.badge-status{
+display:inline-block;
+margin-top:10px;
+margin-left:6px;
+padding:6px 10px;
+border-radius:8px;
+font-weight:bold;
+font-size:13px;
+}
+
+.badge-status.pendente{ background:#fff3cd; color:#7a5b00; }
+.badge-status.entregue{ background:#d9f7e6; color:#136c34; }
+.badge-status.ocorrencia{ background:#fbdada; color:#8c1c1c; }
+
+.motivo-texto{
+font-size:13px;
+color:#8c1c1c;
+margin-top:6px;
+font-style:italic;
 }
 
 .pacotes{
@@ -127,6 +210,82 @@ word-break:break-word;
 font-size:14px;
 color:#555;
 margin-top:4px;
+}
+
+#mapa{
+height:320px;
+border-radius:12px;
+margin-top:12px;
+display:none;
+}
+
+.leaflet-popup-content{
+font-family:Arial,sans-serif;
+}
+
+.popup-titulo{
+font-weight:bold;
+margin-bottom:4px;
+}
+
+.popup-btn{
+display:inline-block;
+padding:5px 8px;
+border-radius:6px;
+font-size:12px;
+font-weight:bold;
+color:white;
+border:none;
+margin-top:4px;
+margin-right:4px;
+cursor:pointer;
+}
+
+/* Modal de motivo da ocorrência */
+.modal-fundo{
+display:none;
+position:fixed;
+top:0;left:0;right:0;bottom:0;
+background:rgba(0,0,0,.5);
+z-index:1000;
+align-items:flex-end;
+justify-content:center;
+}
+
+.modal-fundo.aberto{
+display:flex;
+}
+
+.modal-caixa{
+background:white;
+width:100%;
+max-width:480px;
+border-radius:16px 16px 0 0;
+padding:18px;
+}
+
+.modal-caixa h3{
+margin-top:0;
+}
+
+.motivo-opcao{
+width:100%;
+text-align:left;
+background:#f4f4f4;
+color:#333;
+margin-top:8px;
+padding:12px;
+border-radius:10px;
+}
+
+.motivo-opcao:active{
+background:#ffe0cc;
+}
+
+.cancelar-modal{
+background:#eee;
+color:#555;
+margin-top:14px;
 }
 
 </style>
@@ -156,6 +315,14 @@ onclick="importarExcel()">
 Importar Rota
 </button>
 
+<button
+class="toggle-mapa"
+onclick="alternarMapa()">
+🗺️ Mostrar/Ocultar Mapa
+</button>
+
+<div id="mapa"></div>
+
 <div class="stats">
 
 <div class="stat">
@@ -168,6 +335,25 @@ Importar Rota
 <h2 id="locais">0</h2>
 </div>
 
+<div class="stat pendente-cor">
+<div>Pendentes</div>
+<h2 id="qtdPendentes">0</h2>
+</div>
+
+<div class="stat entregue-cor">
+<div>Entregues</div>
+<h2 id="qtdEntregues">0</h2>
+</div>
+
+<div class="stat ocorrencia-cor" style="grid-column:1 / span 2;">
+<div>Ocorrências</div>
+<h2 id="qtdOcorrencias">0</h2>
+</div>
+
+</div>
+
+<div class="barra-progresso">
+<div class="barra-progresso-fill" id="barraProgresso">0%</div>
 </div>
 
 </div>
@@ -176,14 +362,45 @@ Importar Rota
 
 </div>
 
+<!-- Modal para selecionar o motivo da ocorrência -->
+<div class="modal-fundo" id="modalMotivo">
+<div class="modal-caixa">
+<h3>Motivo da ocorrência</h3>
+<button class="motivo-opcao" onclick="confirmarOcorrencia('Cliente ausente')">Cliente ausente</button>
+<button class="motivo-opcao" onclick="confirmarOcorrencia('Comércio fechado')">Comércio fechado</button>
+<button class="motivo-opcao" onclick="confirmarOcorrencia('Endereço não localizado')">Endereço não localizado</button>
+<button class="motivo-opcao" onclick="confirmarOcorrencia('Recusado')">Recusado</button>
+<button class="motivo-opcao" onclick="confirmarOcorrencia('Problema de acesso')">Problema de acesso</button>
+<button class="motivo-opcao" onclick="confirmarOcorrencia('Outro')">Outro</button>
+<button class="cancelar-modal" onclick="fecharModalMotivo()">Cancelar</button>
+</div>
+</div>
+
 <script>
+
+// ======================================================================
+// ESTADO GLOBAL
+// grupos: array de paradas. Cada parada:
+// { id, stop, endereco, lat, lng, pacotes:[{codigo,endereco,stop}],
+//   status: 'pendente' | 'entregue' | 'ocorrencia', motivo: string|null }
+// ======================================================================
+
+let grupos = [];
+let mapa = null;
+let marcadores = {};
+let grupoAguardandoMotivo = null;
+const CHAVE_STORAGE = "copiloto_entregas_rota_atual";
+
+// ----------------------------------------------------------------------
+// IMPORTAÇÃO DA PLANILHA
+// ----------------------------------------------------------------------
 
 function importarExcel(){
 
 const arquivo =
 document.getElementById("arquivo").files[0];
 
-  
+
 if(!arquivo){
 
 alert("Selecione a planilha");
@@ -209,29 +426,20 @@ workbook.SheetNames[0]
 const json =
 XLSX.utils.sheet_to_json(sheet);
 
-mostrarEntregas(json);
+processarEntregas(json);
 
 };
 reader.readAsArrayBuffer(arquivo);
 
 }
 
-function mostrarEntregas(dados){
+function processarEntregas(dados){
+
+// Nova planilha = nova rota (zera tudo, inclusive o que estava salvo)
+const gruposTemp = {};
 
 document.getElementById("pacotes").innerText =
 dados.length;
-
-const grupos = {};
-
-/*
-  Regra de agrupamento:
-  - Stops como 1, 1A e 1B ficam juntos SOMENTE quando
-    possuem o mesmo endereço/coordenadas.
-  - Stops diferentes continuam separados quando o endereço
-    ou as coordenadas forem diferentes.
-  - Linhas sem Stop são Extras e são agrupadas pelo endereço/
-    coordenadas.
-*/
 
 dados.forEach(item=>{
 
@@ -260,41 +468,34 @@ item["stop"] ||
 
 const stopTexto = String(stopOriginal).trim();
 
-/* Remove somente a letra final do Stop para obter a parada-base.
-   Ex.: 1A -> 1, 1B -> 1, 12A -> 12. */
 const paradaBase = stopTexto
 .replace(/[A-Za-z]$/,"")
 .trim();
 
-/*
-  Coordenadas são a melhor identificação de local quando existem.
-  Quando não existem, usamos o endereço.
-*/
 const localChave = (lat && lng)
 ? String(lat).trim() + "|" + String(lng).trim()
 : String(endereco).trim().toLowerCase();
 
-/*
-  Stops com a mesma parada-base só podem ser unidos quando
-  representam o mesmo local.
-*/
 const chave = stopTexto
 ? "STOP|" + paradaBase + "|" + localChave
 : "EXTRA|" + localChave;
 
-if(!grupos[chave]){
+if(!gruposTemp[chave]){
 
-grupos[chave] = {
+gruposTemp[chave] = {
+id: chave,
 endereco:endereco,
 lat:lat,
 lng:lng,
 stop:paradaBase,
-pacotes:[]
+pacotes:[],
+status:'pendente',
+motivo:null
 };
 
 }
 
-grupos[chave].pacotes.push({
+gruposTemp[chave].pacotes.push({
 
 codigo:codigo,
 endereco:endereco,
@@ -304,20 +505,47 @@ stop:stopTexto
 
 });
 
+grupos = Object.values(gruposTemp);
+
+salvarStorage();
+renderizarTudo();
+
+}
+
+// ----------------------------------------------------------------------
+// ORDENAÇÃO E RENDERIZAÇÃO DA LISTA
+// ----------------------------------------------------------------------
+
+function ordemStatus(status){
+if(status === 'pendente') return 0;
+if(status === 'ocorrencia') return 1;
+return 2; // entregue vai para o final
+}
+
+function listaOrdenada(){
+return grupos
+.map((g,indiceOriginal)=>({g,indiceOriginal}))
+.sort((a,b)=>{
+const diff = ordemStatus(a.g.status) - ordemStatus(b.g.status);
+if(diff !== 0) return diff;
+return a.indiceOriginal - b.indiceOriginal;
+})
+.map(x=>x.g);
+}
+
+function renderizarTudo(){
 
 const lista =
 document.getElementById("lista");
 
 lista.innerHTML = "";
 
-const locais =
-Object.values(grupos);
+const ordenados = listaOrdenada();
 
 document.getElementById("locais")
-.innerText = locais.length;
+.innerText = grupos.length;
 
-
-locais.forEach((grupo,index)=>{
+ordenados.forEach((grupo)=>{
 
 let htmlPacotes = "";
 
@@ -341,10 +569,25 @@ ${pacote.endereco}
 
 });
 
+let badgeStatusHtml = "";
+if(grupo.status === 'entregue'){
+badgeStatusHtml = `<span class="badge-status entregue">✅ Entregue</span>`;
+} else if(grupo.status === 'ocorrencia'){
+badgeStatusHtml = `<span class="badge-status ocorrencia">⚠️ Ocorrência</span>`;
+} else {
+badgeStatusHtml = `<span class="badge-status pendente">🟡 Pendente</span>`;
+}
+
+const motivoHtml = (grupo.status === 'ocorrencia' && grupo.motivo)
+? `<div class="motivo-texto">Motivo: ${grupo.motivo}</div>`
+: "";
+
+// Pacotes ficam ocultos automaticamente quando a parada é entregue
+const pacotesEstiloAberto = (grupo.status === 'entregue') ? "none" : null;
 
 lista.innerHTML += `
 
-<div class="grupo">
+<div class="grupo status-${grupo.status}" id="grupo_${grupo.id}">
 
 <h3>
 ${grupo.stop ? "📍 Parada " + grupo.stop : "⭐ Extra"}
@@ -358,15 +601,17 @@ ${grupo.endereco}
 ${grupo.pacotes.length}
 pacote(s) neste local
 </div>
+${badgeStatusHtml}
+${motivoHtml}
 
 <button
 class="toggle"
-onclick="alternarPacotes(${index})">
-Mostrar pacotes
+onclick="alternarPacotes('${grupo.id}')">
+Mostrar/Ocultar pacotes
 </button>
 
 <div
-id="pacotes_${index}"
+id="pacotes_${grupo.id}"
 class="pacotes">
 
 ${htmlPacotes}
@@ -382,18 +627,28 @@ abrirWaze(
 )">
 Abrir no Waze</button>
 
+<div class="btn-linha">
+<button class="entregue-btn" onclick="marcarEntregue('${grupo.id}')">✅ Entregue</button>
+<button class="ocorrencia-btn" onclick="abrirModalMotivo('${grupo.id}')">⚠️ Ocorrência</button>
+<button class="desfazer-btn" onclick="desfazerStatus('${grupo.id}')">↩️ Desfazer</button>
+</div>
+
 </div>
 
 `;
 
 });
 
+atualizarEstatisticas();
+atualizarMapa();
+
 }
-function alternarPacotes(index){
+
+function alternarPacotes(id){
 
 const elemento =
 document.getElementById(
-"pacotes_" + index
+"pacotes_" + id
 );
 
 if(
@@ -432,8 +687,199 @@ window.open(
 
 }
 
+// ----------------------------------------------------------------------
+// V4.1 - STATUS DA PARADA (Entregue / Ocorrência / Desfazer)
+// ----------------------------------------------------------------------
+
+function encontrarGrupo(id){
+return grupos.find(g => g.id === id);
+}
+
+function marcarEntregue(id){
+const grupo = encontrarGrupo(id);
+if(!grupo) return;
+grupo.status = 'entregue';
+grupo.motivo = null;
+// "Entregue recolhe os pacotes automaticamente" -> lista de pacotes fecha
+salvarStorage();
+renderizarTudo();
+}
+
+function abrirModalMotivo(id){
+grupoAguardandoMotivo = id;
+document.getElementById('modalMotivo').classList.add('aberto');
+}
+
+function fecharModalMotivo(){
+grupoAguardandoMotivo = null;
+document.getElementById('modalMotivo').classList.remove('aberto');
+}
+
+function confirmarOcorrencia(motivo){
+if(!grupoAguardandoMotivo) return;
+const grupo = encontrarGrupo(grupoAguardandoMotivo);
+if(grupo){
+grupo.status = 'ocorrencia';
+grupo.motivo = motivo;
+salvarStorage();
+renderizarTudo();
+}
+fecharModalMotivo();
+}
+
+function desfazerStatus(id){
+const grupo = encontrarGrupo(id);
+if(!grupo) return;
+grupo.status = 'pendente';
+grupo.motivo = null;
+salvarStorage();
+renderizarTudo();
+}
+
+// ----------------------------------------------------------------------
+// V6 - ESTATÍSTICAS DA ROTA
+// ----------------------------------------------------------------------
+
+function atualizarEstatisticas(){
+
+const totalParadas = grupos.length;
+const pendentes = grupos.filter(g=>g.status==='pendente').length;
+const entregues = grupos.filter(g=>g.status==='entregue').length;
+const ocorrencias = grupos.filter(g=>g.status==='ocorrencia').length;
+
+document.getElementById('qtdPendentes').innerText = pendentes;
+document.getElementById('qtdEntregues').innerText = entregues;
+document.getElementById('qtdOcorrencias').innerText = ocorrencias;
+
+const percentual = totalParadas > 0
+? Math.round((entregues / totalParadas) * 100)
+: 0;
+
+const barra = document.getElementById('barraProgresso');
+barra.style.width = percentual + '%';
+barra.innerText = percentual + '%';
+
+}
+
+// ----------------------------------------------------------------------
+// V4.2 - PERSISTÊNCIA COM localStorage
+// ----------------------------------------------------------------------
+
+function salvarStorage(){
+try{
+localStorage.setItem(CHAVE_STORAGE, JSON.stringify(grupos));
+}catch(erro){
+console.error("Não foi possível salvar a rota localmente:", erro);
+}
+}
+
+function carregarStorage(){
+try{
+const salvo = localStorage.getItem(CHAVE_STORAGE);
+if(!salvo) return;
+grupos = JSON.parse(salvo);
+
+const totalPacotes = grupos.reduce((acc,g)=>acc + g.pacotes.length, 0);
+document.getElementById("pacotes").innerText = totalPacotes;
+
+renderizarTudo();
+}catch(erro){
+console.error("Não foi possível carregar a rota salva:", erro);
+}
+}
+
+// ----------------------------------------------------------------------
+// V5 - MAPA INTEGRADO (Leaflet)
+// ----------------------------------------------------------------------
+
+function alternarMapa(){
+const div = document.getElementById('mapa');
+const estaVisivel = div.style.display === 'block';
+div.style.display = estaVisivel ? 'none' : 'block';
+
+if(!estaVisivel){
+if(!mapa){
+mapa = L.map('mapa').setView([-23.5505,-46.6333], 12);
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+maxZoom: 19,
+attribution: '&copy; OpenStreetMap contributors'
+}).addTo(mapa);
+}
+// Leaflet precisa recalcular o tamanho quando o container estava oculto
+setTimeout(()=>{ mapa.invalidateSize(); atualizarMapa(); }, 150);
+}
+}
+
+function corPorStatus(status){
+if(status === 'entregue') return '#2ecc71';
+if(status === 'ocorrencia') return '#e74c3c';
+return '#ff6a00';
+}
+
+function popupHtml(grupo){
+const motivoHtml = (grupo.status === 'ocorrencia' && grupo.motivo)
+? `<div style="color:#8c1c1c;font-size:12px;margin-top:4px;">Motivo: ${grupo.motivo}</div>`
+: '';
+
+return `
+<div class="popup-titulo">${grupo.stop ? "📍 Parada " + grupo.stop : "⭐ Extra"}</div>
+<div style="font-size:13px;">${grupo.endereco}</div>
+<div style="font-size:12px;margin-top:4px;">${grupo.pacotes.length} pacote(s)</div>
+${motivoHtml}
+<div style="margin-top:8px;">
+<button class="popup-btn" style="background:#00b7ff" onclick="abrirWaze('${grupo.lat}','${grupo.lng}')">Waze</button>
+<button class="popup-btn" style="background:#2ecc71" onclick="marcarEntregue('${grupo.id}')">Entregue</button>
+<button class="popup-btn" style="background:#e74c3c" onclick="abrirModalMotivo('${grupo.id}')">Ocorrência</button>
+<button class="popup-btn" style="background:#ccc;color:#333" onclick="desfazerStatus('${grupo.id}')">Desfazer</button>
+</div>
+`;
+}
+
+function atualizarMapa(){
+
+if(!mapa) return;
+
+Object.values(marcadores).forEach(m => mapa.removeLayer(m));
+marcadores = {};
+
+const pontosValidos = [];
+
+grupos.forEach(grupo=>{
+
+const lat = parseFloat(grupo.lat);
+const lng = parseFloat(grupo.lng);
+if(isNaN(lat) || isNaN(lng)) return;
+
+const icone = L.divIcon({
+html: `<div style="background:${corPorStatus(grupo.status)};width:26px;height:26px;border-radius:50%;border:2px solid white;box-shadow:0 1px 4px rgba(0,0,0,.5);display:flex;align-items:center;justify-content:center;color:white;font-size:11px;font-weight:bold;">${grupo.stop || '★'}</div>`,
+className:'',
+iconSize:[26,26],
+iconAnchor:[13,13],
+popupAnchor:[0,-13]
+});
+
+const marcador = L.marker([lat,lng], {icon: icone}).addTo(mapa);
+marcador.bindPopup(popupHtml(grupo));
+marcadores[grupo.id] = marcador;
+
+pontosValidos.push([lat,lng]);
+
+});
+
+if(pontosValidos.length > 0){
+mapa.fitBounds(pontosValidos, {padding:[30,30]});
+}
+
+}
+
+// ----------------------------------------------------------------------
+// INICIALIZAÇÃO
+// ----------------------------------------------------------------------
+
+carregarStorage();
+
 </script>
-  
+
 </body>
 
 </html>
