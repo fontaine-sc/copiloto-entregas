@@ -129,6 +129,7 @@ flex:1;
 margin:0;
 padding:14px 6px;
 border:none;
+border-right:1px solid #ff6a00;
 border-radius:0;
 background:white;
 color:#777;
@@ -136,6 +137,10 @@ font-size:13px;
 font-weight:bold;
 border-bottom:3px solid transparent;
 cursor:pointer;
+}
+
+.aba-btn:last-child{
+border-right:none;
 }
 
 .aba-btn.ativa{
@@ -340,9 +345,9 @@ margin-top:14px;
 </header>
 
 <div class="abas">
-<button class="aba-btn ativa" id="btnAbaLista" onclick="irParaAba(0)">📋 Lista</button>
+<button class="aba-btn ativa" id="btnAbaLista" onclick="irParaAba(0)">📋 Lista (<span id="contadorLista">0</span>)</button>
 <button class="aba-btn" id="btnAbaMapa" onclick="irParaAba(1)">🗺️ Mapa</button>
-<button class="aba-btn ocorrencias-aba" id="btnAbaOcorrencias" onclick="irParaAba(2)">⚠️ Ocorrências</button>
+<button class="aba-btn ocorrencias-aba" id="btnAbaOcorrencias" onclick="irParaAba(2)">⚠️ Ocorrências (<span id="contadorOcorrencias">0</span>)</button>
 </div>
 
 <div id="areaAbas">
@@ -872,6 +877,10 @@ document.getElementById('qtdPendentes').innerText = pendentes;
 document.getElementById('qtdEntregues').innerText = entregues;
 document.getElementById('qtdOcorrencias').innerText = ocorrencias;
 
+// Contadores exibidos direto no nome das abas (igual ao app da Shopee)
+document.getElementById('contadorLista').innerText = pendentes + ocorrencias;
+document.getElementById('contadorOcorrencias').innerText = ocorrencias;
+
 const percentual = totalParadas > 0
 ? Math.round((entregues / totalParadas) * 100)
 : 0;
@@ -1018,34 +1027,6 @@ atualizarMapa();
 }
 
 }
-
-// Suporte a "jogar para o lado" (swipe) para trocar de aba no celular
-(function configurarSwipe(){
-const area = document.getElementById('areaAbas');
-let inicioX = 0;
-let inicioY = 0;
-
-area.addEventListener('touchstart', function(e){
-inicioX = e.touches[0].clientX;
-inicioY = e.touches[0].clientY;
-}, {passive:true});
-
-area.addEventListener('touchend', function(e){
-const fimX = e.changedTouches[0].clientX;
-const fimY = e.changedTouches[0].clientY;
-const deltaX = fimX - inicioX;
-const deltaY = fimY - inicioY;
-
-// Só considera swipe horizontal (ignora rolagem vertical da lista/mapa)
-if(Math.abs(deltaX) > 60 && Math.abs(deltaX) > Math.abs(deltaY) * 1.5){
-if(deltaX < 0){
-irParaAba(abaAtual + 1); // arrastou para a esquerda -> próxima aba
-}else{
-irParaAba(abaAtual - 1); // arrastou para a direita -> aba anterior
-}
-}
-}, {passive:true});
-})();
 
 // ----------------------------------------------------------------------
 // INICIALIZAÇÃO
