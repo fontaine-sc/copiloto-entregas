@@ -12,6 +12,7 @@
 <script src="https://cdn.jsdelivr.net/npm/xlsx/dist/xlsx.full.min.js"></script>
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css" />
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script src="https://unpkg.com/leaflet-rotate@0.2.8/dist/leaflet-rotate-src.js"></script>
 
 <style>
 
@@ -178,6 +179,44 @@ color:#999;
 padding:30px 10px;
 }
 
+.divisoria-entregues{
+display:flex;
+align-items:center;
+text-align:center;
+color:#2ecc71;
+font-weight:bold;
+font-size:13px;
+margin:20px 0 10px 0;
+}
+
+.divisoria-entregues::before,
+.divisoria-entregues::after{
+content:"";
+flex:1;
+height:1px;
+background:#cdeedc;
+}
+
+.divisoria-entregues span{
+padding:0 10px;
+}
+
+.pin-usuario{
+width:18px;
+height:18px;
+background:#2563eb;
+border:3px solid white;
+border-radius:50%;
+box-shadow:0 0 0 4px rgba(37,99,235,.35);
+animation:pulsoUsuario 2s infinite;
+}
+
+@keyframes pulsoUsuario{
+0%{ box-shadow:0 0 0 4px rgba(37,99,235,.35); }
+70%{ box-shadow:0 0 0 12px rgba(37,99,235,0); }
+100%{ box-shadow:0 0 0 4px rgba(37,99,235,0); }
+}
+
 /* Pin estilo "etiqueta" (Mercado Livre) */
 .pin-etiqueta{
 width:30px;
@@ -211,6 +250,21 @@ box-shadow:0 2px 10px rgba(0,0,0,.15);
 font-weight:bold;
 color:#333;
 font-size:14px;
+z-index:400;
+}
+
+#botaoBussola{
+position:absolute;
+top:70px;
+right:12px;
+width:44px;
+height:44px;
+padding:0;
+margin:0;
+border-radius:50%;
+background:white;
+box-shadow:0 2px 8px rgba(0,0,0,.2);
+font-size:20px;
 z-index:400;
 }
 
@@ -502,6 +556,8 @@ Importar Rota
 <span id="resumoMapaTexto">0 pendentes</span>
 </div>
 
+<button id="botaoBussola" onclick="resetarRotacaoMapa()" title="Voltar ao norte">🧭</button>
+
 <div id="fundoInfoMapa" onclick="fecharInfoMapa()"></div>
 <div id="painelInfoMapa">
 <div class="alca-painel"></div>
@@ -544,6 +600,8 @@ Importar Rota
 let grupos = [];
 let mapa = null;
 let marcadores = {};
+let meuMarcador = null;
+let idRastreamento = null;
 let grupoAguardandoMotivo = null;
 let abaAtual = 0; // 0 = Lista, 1 = Mapa, 2 = Ocorrências
 let mapaFoiEnquadrado = false; // controla se já demos fitBounds (evita resetar o zoom)
@@ -693,6 +751,12 @@ return a.indiceOriginal - b.indiceOriginal;
 .map(x=>x.g);
 }
 
+// Lista da aba principal: só pendentes e entregues.
+// Ocorrências saem daqui e aparecem exclusivamente na aba "Ocorrências".
+function listaPrincipal(){
+return listaOrdenada().filter(g => g.status !== 'ocorrencia');
+}
+
 // Um Stop é considerado "de verdade" quando existe e não é só um
 // traço/vazio. Cobre casos de planilha sem coluna Stop, Stop vazio
 // ou com valor "-" (o que antes aparecia errado como "Parada -").
@@ -711,12 +775,19 @@ document.getElementById("lista");
 
 lista.innerHTML = "";
 
-const ordenados = listaOrdenada();
+const ordenados = listaPrincipal();
 
 document.getElementById("locais")
 .innerText = grupos.length;
 
+let divisoriaEntreguesInserida = false;
+
 ordenados.forEach((grupo)=>{
+
+if(grupo.status === 'entregue' && !divisoriaEntreguesInserida){
+lista.innerHTML += `<div class="divisoria-entregues"><span>✅ Entregues</span></div>`;
+divisoriaEntreguesInserida = true;
+}
 
 let htmlPacotes = "";
 
@@ -1018,17 +1089,80 @@ console.error("Não foi possível carregar a rota salva:", erro);
 
 function inicializarMapaSeNecessario(){
 if(mapa) return;
-mapa = L.map('mapa').setView([-23.5505,-46.6333], 12);
+
+mapa = L.map('mapa', {
+rotate: true,        // habilita a rotação do mapa
+touchRotate: true,    // gira com o gesto de dois dedos no celular
+rotateControl: false, // vamos usar nosso próprio botão de bússola
+bearing: 0
+}).setView([-23.5505,-46.6333], 12);
+
 L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
 maxZoom: 19,
 attribution: '&copy; OpenStreetMap contributors'
 }).addTo(mapa);
+
+}
+
+// Volta o mapa para a orientação normal (norte para cima)
+function resetarRotacaoMapa(){
+if(mapa && typeof mapa.setBearing === 'function'){
+mapa.setBearing(0);
+}
+}
+
+// Mostra a localização do usuário no mapa e vai atualizando conforme ele anda
+function iniciarRastreamentoLocalizacao(){
+
+if(!navigator.geolocation){
+console.warn("Geolocalização não é suportada neste navegador.");
+return;
+}
+
+if(idRastreamento !== null) return; // já está rastreando
+
+idRastreamento = navigator.geolocation.watchPosition(
+function(posicao){
+
+const lat = posicao.coords.latitude;
+const lng = posicao.coords.longitude;
+
+if(!meuMarcador){
+
+const icone = L.divIcon({
+html: '<div class="pin-usuario"></div>',
+className:'',
+iconSize:[18,18],
+iconAnchor:[9,9]
+});
+
+meuMarcador = L.marker([lat,lng], {icon:icone, zIndexOffset:1000}).addTo(mapa);
+
+// Na primeira localização, centraliza o mapa nela também
+mapa.setView([lat,lng], 15);
+
+}else{
+// Só atualiza a posição - não mexe mais no zoom/centralização do usuário
+meuMarcador.setLatLng([lat,lng]);
+}
+
+},
+function(erro){
+console.warn("Não foi possível obter a localização:", erro.message);
+},
+{
+enableHighAccuracy:true,
+maximumAge:5000,
+timeout:15000
+}
+);
+
 }
 
 function corPorStatus(status){
 if(status === 'entregue') return '#2ecc71';
 if(status === 'ocorrencia') return '#e74c3c';
-return '#1f7a3d'; // verde escuro, no estilo do pin do Mercado Livre
+return '#ff6a00'; // laranja padrão Shopee, igual ao resto do site
 }
 
 // ----- Painel inferior (bottom sheet) ao clicar num pin do mapa -----
@@ -1159,6 +1293,7 @@ document.getElementById(idBtn).classList.toggle('ativa', i === indice);
 // tamanho (necessário porque ele estava com display:none)
 if(indice === 1){
 inicializarMapaSeNecessario();
+iniciarRastreamentoLocalizacao();
 setTimeout(()=>{
 mapa.invalidateSize();
 atualizarMapa();
