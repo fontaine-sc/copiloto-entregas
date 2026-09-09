@@ -253,7 +253,7 @@ font-size:14px;
 z-index:400;
 }
 
-#botaoBussola{
+#botaoCentralizar{
 position:absolute;
 top:70px;
 right:12px;
@@ -337,7 +337,7 @@ transition:opacity .2s ease;
 }
 
 .grupo.status-entregue{
-border-left-color:#2ecc71;
+border-left-color:#9ca3af;
 opacity:.7;
 }
 
@@ -371,7 +371,7 @@ font-size:13px;
 }
 
 .badge-status.pendente{ background:#fff3cd; color:#7a5b00; }
-.badge-status.entregue{ background:#d9f7e6; color:#136c34; }
+.badge-status.entregue{ background:#e5e7eb; color:#374151; }
 .badge-status.ocorrencia{ background:#fbdada; color:#8c1c1c; }
 
 .motivo-texto{
@@ -556,7 +556,7 @@ Importar Rota
 <span id="resumoMapaTexto">0 pendentes</span>
 </div>
 
-<button id="botaoBussola" onclick="resetarRotacaoMapa()" title="Voltar ao norte">🧭</button>
+<button id="botaoCentralizar" onclick="centralizarMinhaLocalizacao()" title="Centralizar na minha localização">🎯</button>
 
 <div id="fundoInfoMapa" onclick="fecharInfoMapa()"></div>
 <div id="painelInfoMapa">
@@ -1105,9 +1105,13 @@ attribution: '&copy; OpenStreetMap contributors'
 }
 
 // Volta o mapa para a orientação normal (norte para cima)
-function resetarRotacaoMapa(){
-if(mapa && typeof mapa.setBearing === 'function'){
-mapa.setBearing(0);
+// Centraliza o mapa na localização atual do usuário
+function centralizarMinhaLocalizacao(){
+if(meuMarcador){
+mapa.setView(meuMarcador.getLatLng(), Math.max(mapa.getZoom(), 16));
+}else{
+alert("Ainda não conseguimos sua localização. Verifique se a permissão de localização está ativada.");
+iniciarRastreamentoLocalizacao();
 }
 }
 
@@ -1160,7 +1164,7 @@ timeout:15000
 }
 
 function corPorStatus(status){
-if(status === 'entregue') return '#2ecc71';
+if(status === 'entregue') return '#9ca3af';
 if(status === 'ocorrencia') return '#e74c3c';
 return '#ff6a00'; // laranja padrão Shopee, igual ao resto do site
 }
