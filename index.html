@@ -161,6 +161,11 @@ display:none;
 display:block;
 }
 
+#painelMapa{
+position:relative;
+overflow:hidden;
+}
+
 #mapa{
 height:calc(100vh - 130px);
 border-radius:0;
@@ -171,6 +176,84 @@ margin-top:0;
 text-align:center;
 color:#999;
 padding:30px 10px;
+}
+
+/* Pin estilo "etiqueta" (Mercado Livre) */
+.pin-etiqueta{
+width:30px;
+height:30px;
+border-radius:8px 8px 8px 2px;
+transform:rotate(45deg);
+display:flex;
+align-items:center;
+justify-content:center;
+box-shadow:0 2px 5px rgba(0,0,0,.4);
+border:2px solid white;
+}
+
+.pin-etiqueta span{
+transform:rotate(-45deg);
+color:white;
+font-size:12px;
+font-weight:bold;
+}
+
+/* Barra de resumo flutuante sobre o mapa */
+#resumoMapa{
+position:absolute;
+top:12px;
+left:12px;
+right:12px;
+background:white;
+border-radius:12px;
+padding:12px 16px;
+box-shadow:0 2px 10px rgba(0,0,0,.15);
+font-weight:bold;
+color:#333;
+font-size:14px;
+z-index:400;
+}
+
+/* Fundo escurecido atrás do painel inferior */
+#fundoInfoMapa{
+display:none;
+position:absolute;
+top:0;left:0;right:0;bottom:0;
+background:rgba(0,0,0,.35);
+z-index:600;
+}
+
+#fundoInfoMapa.aberto{
+display:block;
+}
+
+/* Painel inferior (bottom sheet) com os dados da parada, estilo Mercado Livre */
+#painelInfoMapa{
+position:absolute;
+left:0;
+right:0;
+bottom:0;
+background:white;
+border-radius:18px 18px 0 0;
+box-shadow:0 -4px 16px rgba(0,0,0,.25);
+padding:10px 18px 18px 18px;
+transform:translateY(100%);
+transition:transform .25s ease;
+z-index:601;
+max-height:65%;
+overflow-y:auto;
+}
+
+#painelInfoMapa.aberto{
+transform:translateY(0);
+}
+
+.alca-painel{
+width:40px;
+height:5px;
+background:#ddd;
+border-radius:10px;
+margin:0 auto 12px auto;
 }
 
 .btn-linha{
@@ -414,6 +497,17 @@ Importar Rota
 
 <div class="painel-aba" id="painelMapa">
 <div id="mapa"></div>
+
+<div id="resumoMapa">
+<span id="resumoMapaTexto">0 pendentes</span>
+</div>
+
+<div id="fundoInfoMapa" onclick="fecharInfoMapa()"></div>
+<div id="painelInfoMapa">
+<div class="alca-painel"></div>
+<div id="conteudoInfoMapa"></div>
+</div>
+
 </div>
 
 <div class="painel-aba" id="painelOcorrencias">
@@ -934,26 +1028,66 @@ attribution: '&copy; OpenStreetMap contributors'
 function corPorStatus(status){
 if(status === 'entregue') return '#2ecc71';
 if(status === 'ocorrencia') return '#e74c3c';
-return '#ff6a00';
+return '#1f7a3d'; // verde escuro, no estilo do pin do Mercado Livre
 }
 
-function popupHtml(grupo){
+// ----- Painel inferior (bottom sheet) ao clicar num pin do mapa -----
+
+function conteudoInfoHtml(grupo){
 const motivoHtml = (grupo.status === 'ocorrencia' && grupo.motivo)
-? `<div style="color:#8c1c1c;font-size:12px;margin-top:4px;">Motivo: ${grupo.motivo}</div>`
+? `<div class="motivo-texto">Motivo: ${grupo.motivo}</div>`
 : '';
 
+let badgeStatusHtml = "";
+if(grupo.status === 'entregue'){
+badgeStatusHtml = `<span class="badge-status entregue">✅ Entregue</span>`;
+} else if(grupo.status === 'ocorrencia'){
+badgeStatusHtml = `<span class="badge-status ocorrencia">⚠️ Ocorrência</span>`;
+} else {
+badgeStatusHtml = `<span class="badge-status pendente">🟡 Pendente</span>`;
+}
+
 return `
-<div class="popup-titulo">${tituloParada(grupo)}</div>
-<div style="font-size:13px;">${grupo.endereco}</div>
-<div style="font-size:12px;margin-top:4px;">${grupo.pacotes.length} pacote(s)</div>
+<h3 style="margin:0;">${tituloParada(grupo)}</h3>
+<div class="endereco">${grupo.endereco}</div>
+<div class="badge">${grupo.pacotes.length} pacote(s) neste local</div>
+${badgeStatusHtml}
 ${motivoHtml}
-<div style="margin-top:8px;">
-<button class="popup-btn" style="background:#00b7ff" onclick="abrirWaze('${grupo.lat}','${grupo.lng}')">Waze</button>
-<button class="popup-btn" style="background:#2ecc71" onclick="marcarEntregue('${grupo.id}')">Entregue</button>
-<button class="popup-btn" style="background:#e74c3c" onclick="abrirModalMotivo('${grupo.id}')">Ocorrência</button>
-<button class="popup-btn" style="background:#ccc;color:#333" onclick="desfazerStatus('${grupo.id}')">Desfazer</button>
+
+<button class="waze" onclick="abrirWaze('${grupo.lat}','${grupo.lng}')">Abrir no Waze</button>
+
+<div class="btn-linha">
+<button class="entregue-btn" onclick="acaoNoPainelInfo('${grupo.id}','entregue')">✅ Entregue</button>
+<button class="ocorrencia-btn" onclick="acaoNoPainelInfo('${grupo.id}','ocorrencia')">⚠️ Ocorrência</button>
+<button class="desfazer-btn" onclick="acaoNoPainelInfo('${grupo.id}','desfazer')">↩️ Desfazer</button>
 </div>
 `;
+}
+
+function abrirInfoMapa(id){
+const grupo = encontrarGrupo(id);
+if(!grupo) return;
+document.getElementById('conteudoInfoMapa').innerHTML = conteudoInfoHtml(grupo);
+document.getElementById('fundoInfoMapa').classList.add('aberto');
+document.getElementById('painelInfoMapa').classList.add('aberto');
+}
+
+function fecharInfoMapa(){
+document.getElementById('fundoInfoMapa').classList.remove('aberto');
+document.getElementById('painelInfoMapa').classList.remove('aberto');
+}
+
+// Ações disparadas de dentro do painel inferior do mapa
+function acaoNoPainelInfo(id, acao){
+if(acao === 'entregue') marcarEntregue(id);
+if(acao === 'ocorrencia'){ fecharInfoMapa(); abrirModalMotivo(id); return; }
+if(acao === 'desfazer') desfazerStatus(id);
+fecharInfoMapa();
+}
+
+function atualizarResumoMapa(){
+const pendentes = grupos.filter(g => g.status === 'pendente').length;
+document.getElementById('resumoMapaTexto').innerText = pendentes + ' pendente(s)';
 }
 
 function atualizarMapa(){
@@ -971,16 +1105,18 @@ const lat = parseFloat(grupo.lat);
 const lng = parseFloat(grupo.lng);
 if(isNaN(lat) || isNaN(lng)) return;
 
+const rotulo = ehStopValido(grupo.stop) ? grupo.stop : '★';
+
 const icone = L.divIcon({
-html: `<div style="background:${corPorStatus(grupo.status)};width:26px;height:26px;border-radius:50%;border:2px solid white;box-shadow:0 1px 4px rgba(0,0,0,.5);display:flex;align-items:center;justify-content:center;color:white;font-size:11px;font-weight:bold;">${ehStopValido(grupo.stop) ? grupo.stop : '★'}</div>`,
+html: `<div class="pin-etiqueta" style="background:${corPorStatus(grupo.status)}"><span>${rotulo}</span></div>`,
 className:'',
-iconSize:[26,26],
-iconAnchor:[13,13],
-popupAnchor:[0,-13]
+iconSize:[30,30],
+iconAnchor:[15,26],
+popupAnchor:[0,-26]
 });
 
 const marcador = L.marker([lat,lng], {icon: icone}).addTo(mapa);
-marcador.bindPopup(popupHtml(grupo));
+marcador.on('click', function(){ abrirInfoMapa(grupo.id); });
 marcadores[grupo.id] = marcador;
 
 pontosValidos.push([lat,lng]);
@@ -992,7 +1128,10 @@ mapa.fitBounds(pontosValidos, {padding:[30,30]});
 mapaFoiEnquadrado = true;
 }
 
+atualizarResumoMapa();
+
 }
+
 
 // ----------------------------------------------------------------------
 // NAVEGAÇÃO POR ABAS (Lista / Mapa / Ocorrências) + SWIPE
