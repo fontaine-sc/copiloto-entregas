@@ -115,9 +115,57 @@ background:#e9e9e9;
 color:#333;
 }
 
-.toggle-mapa{
-background:#333;
-color:white;
+.abas{
+display:flex;
+background:white;
+position:sticky;
+top:0;
+z-index:500;
+box-shadow:0 2px 6px rgba(0,0,0,.08);
+}
+
+.aba-btn{
+flex:1;
+margin:0;
+padding:14px 6px;
+border:none;
+border-radius:0;
+background:white;
+color:#777;
+font-size:13px;
+font-weight:bold;
+border-bottom:3px solid transparent;
+cursor:pointer;
+}
+
+.aba-btn.ativa{
+color:#ff6a00;
+border-bottom:3px solid #ff6a00;
+}
+
+.aba-btn.ocorrencias-aba.ativa{
+color:#e74c3c;
+border-bottom-color:#e74c3c;
+}
+
+.painel-aba{
+display:none;
+}
+
+.painel-aba.ativo{
+display:block;
+}
+
+#mapa{
+height:calc(100vh - 130px);
+border-radius:0;
+margin-top:0;
+}
+
+.aviso-vazio{
+text-align:center;
+color:#999;
+padding:30px 10px;
 }
 
 .btn-linha{
@@ -212,13 +260,6 @@ color:#555;
 margin-top:4px;
 }
 
-#mapa{
-height:320px;
-border-radius:12px;
-margin-top:12px;
-display:none;
-}
-
 .leaflet-popup-content{
 font-family:Arial,sans-serif;
 }
@@ -298,6 +339,16 @@ margin-top:14px;
 🚚 Copiloto Entregas
 </header>
 
+<div class="abas">
+<button class="aba-btn ativa" id="btnAbaLista" onclick="irParaAba(0)">📋 Lista</button>
+<button class="aba-btn" id="btnAbaMapa" onclick="irParaAba(1)">🗺️ Mapa</button>
+<button class="aba-btn ocorrencias-aba" id="btnAbaOcorrencias" onclick="irParaAba(2)">⚠️ Ocorrências</button>
+</div>
+
+<div id="areaAbas">
+
+<div class="painel-aba ativo" id="painelLista">
+
 <div class="container">
 
 <div class="card">
@@ -314,14 +365,6 @@ class="importar"
 onclick="importarExcel()">
 Importar Rota
 </button>
-
-<button
-class="toggle-mapa"
-onclick="alternarMapa()">
-🗺️ Mostrar/Ocultar Mapa
-</button>
-
-<div id="mapa"></div>
 
 <div class="stats">
 
@@ -362,6 +405,20 @@ onclick="alternarMapa()">
 
 </div>
 
+</div>
+
+<div class="painel-aba" id="painelMapa">
+<div id="mapa"></div>
+</div>
+
+<div class="painel-aba" id="painelOcorrencias">
+<div class="container">
+<div id="listaOcorrencias"></div>
+</div>
+</div>
+
+</div>
+
 <!-- Modal para selecionar o motivo da ocorrência -->
 <div class="modal-fundo" id="modalMotivo">
 <div class="modal-caixa">
@@ -389,6 +446,8 @@ let grupos = [];
 let mapa = null;
 let marcadores = {};
 let grupoAguardandoMotivo = null;
+let abaAtual = 0; // 0 = Lista, 1 = Mapa, 2 = Ocorrências
+let mapaFoiEnquadrado = false; // controla se já demos fitBounds (evita resetar o zoom)
 const CHAVE_STORAGE = "copiloto_entregas_rota_atual";
 
 // ----------------------------------------------------------------------
@@ -507,6 +566,8 @@ stop:stopTexto
 
 grupos = Object.values(gruposTemp);
 
+mapaFoiEnquadrado = false; // nova rota -> próximo enquadramento do mapa deve se ajustar às novas paradas
+
 salvarStorage();
 renderizarTudo();
 
@@ -531,6 +592,17 @@ if(diff !== 0) return diff;
 return a.indiceOriginal - b.indiceOriginal;
 })
 .map(x=>x.g);
+}
+
+// Um Stop é considerado "de verdade" quando existe e não é só um
+// traço/vazio. Cobre casos de planilha sem coluna Stop, Stop vazio
+// ou com valor "-" (o que antes aparecia errado como "Parada -").
+function ehStopValido(stop){
+return !!stop && String(stop).trim() !== '' && String(stop).trim() !== '-';
+}
+
+function tituloParada(grupo){
+return ehStopValido(grupo.stop) ? ("📍 Parada " + grupo.stop) : "⭐ Extra";
 }
 
 function renderizarTudo(){
@@ -590,7 +662,7 @@ lista.innerHTML += `
 <div class="grupo status-${grupo.status}" id="grupo_${grupo.id}">
 
 <h3>
-${grupo.stop ? "📍 Parada " + grupo.stop : "⭐ Extra"}
+${tituloParada(grupo)}
 </h3>
 
 <div class="endereco">
@@ -641,6 +713,55 @@ Abrir no Waze</button>
 
 atualizarEstatisticas();
 atualizarMapa();
+renderizarOcorrencias();
+
+}
+
+function renderizarOcorrencias(){
+
+const container = document.getElementById('listaOcorrencias');
+const ocorrencias = grupos.filter(g => g.status === 'ocorrencia');
+
+if(ocorrencias.length === 0){
+container.innerHTML = `<div class="aviso-vazio">Nenhuma ocorrência no momento 🎉</div>`;
+return;
+}
+
+container.innerHTML = "";
+
+ocorrencias.forEach(grupo=>{
+
+let htmlPacotes = "";
+grupo.pacotes.forEach(pacote=>{
+htmlPacotes += `
+<div class="pacote">
+<div class="codigo">${pacote.codigo}</div>
+<div class="detalhe">${pacote.endereco}</div>
+</div>
+`;
+});
+
+container.innerHTML += `
+<div class="grupo status-ocorrencia">
+<h3>${tituloParada(grupo)}</h3>
+<div class="endereco">${grupo.endereco}</div>
+<div class="badge">${grupo.pacotes.length} pacote(s) neste local</div>
+<span class="badge-status ocorrencia">⚠️ Ocorrência</span>
+${grupo.motivo ? `<div class="motivo-texto">Motivo: ${grupo.motivo}</div>` : ""}
+
+<button class="toggle" onclick="alternarPacotes('oc_${grupo.id}')">Mostrar/Ocultar pacotes</button>
+<div id="pacotes_oc_${grupo.id}" class="pacotes">${htmlPacotes}</div>
+
+<button class="waze" onclick="abrirWaze('${grupo.lat}','${grupo.lng}')">Abrir no Waze</button>
+
+<div class="btn-linha">
+<button class="entregue-btn" onclick="marcarEntregue('${grupo.id}')">✅ Entregue</button>
+<button class="desfazer-btn" onclick="desfazerStatus('${grupo.id}')">↩️ Desfazer</button>
+</div>
+</div>
+`;
+
+});
 
 }
 
@@ -792,22 +913,13 @@ console.error("Não foi possível carregar a rota salva:", erro);
 // V5 - MAPA INTEGRADO (Leaflet)
 // ----------------------------------------------------------------------
 
-function alternarMapa(){
-const div = document.getElementById('mapa');
-const estaVisivel = div.style.display === 'block';
-div.style.display = estaVisivel ? 'none' : 'block';
-
-if(!estaVisivel){
-if(!mapa){
+function inicializarMapaSeNecessario(){
+if(mapa) return;
 mapa = L.map('mapa').setView([-23.5505,-46.6333], 12);
 L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
 maxZoom: 19,
 attribution: '&copy; OpenStreetMap contributors'
 }).addTo(mapa);
-}
-// Leaflet precisa recalcular o tamanho quando o container estava oculto
-setTimeout(()=>{ mapa.invalidateSize(); atualizarMapa(); }, 150);
-}
 }
 
 function corPorStatus(status){
@@ -822,7 +934,7 @@ const motivoHtml = (grupo.status === 'ocorrencia' && grupo.motivo)
 : '';
 
 return `
-<div class="popup-titulo">${grupo.stop ? "📍 Parada " + grupo.stop : "⭐ Extra"}</div>
+<div class="popup-titulo">${tituloParada(grupo)}</div>
 <div style="font-size:13px;">${grupo.endereco}</div>
 <div style="font-size:12px;margin-top:4px;">${grupo.pacotes.length} pacote(s)</div>
 ${motivoHtml}
@@ -851,7 +963,7 @@ const lng = parseFloat(grupo.lng);
 if(isNaN(lat) || isNaN(lng)) return;
 
 const icone = L.divIcon({
-html: `<div style="background:${corPorStatus(grupo.status)};width:26px;height:26px;border-radius:50%;border:2px solid white;box-shadow:0 1px 4px rgba(0,0,0,.5);display:flex;align-items:center;justify-content:center;color:white;font-size:11px;font-weight:bold;">${grupo.stop || '★'}</div>`,
+html: `<div style="background:${corPorStatus(grupo.status)};width:26px;height:26px;border-radius:50%;border:2px solid white;box-shadow:0 1px 4px rgba(0,0,0,.5);display:flex;align-items:center;justify-content:center;color:white;font-size:11px;font-weight:bold;">${ehStopValido(grupo.stop) ? grupo.stop : '★'}</div>`,
 className:'',
 iconSize:[26,26],
 iconAnchor:[13,13],
@@ -866,11 +978,74 @@ pontosValidos.push([lat,lng]);
 
 });
 
-if(pontosValidos.length > 0){
+if(pontosValidos.length > 0 && !mapaFoiEnquadrado){
 mapa.fitBounds(pontosValidos, {padding:[30,30]});
+mapaFoiEnquadrado = true;
 }
 
 }
+
+// ----------------------------------------------------------------------
+// NAVEGAÇÃO POR ABAS (Lista / Mapa / Ocorrências) + SWIPE
+// ----------------------------------------------------------------------
+
+const painéis = ['painelLista','painelMapa','painelOcorrencias'];
+const botõesAba = ['btnAbaLista','btnAbaMapa','btnAbaOcorrencias'];
+
+function irParaAba(indice){
+
+if(indice < 0) indice = 0;
+if(indice > 2) indice = 2;
+
+abaAtual = indice;
+
+painéis.forEach((idPainel, i)=>{
+document.getElementById(idPainel).classList.toggle('ativo', i === indice);
+});
+
+botõesAba.forEach((idBtn, i)=>{
+document.getElementById(idBtn).classList.toggle('ativa', i === indice);
+});
+
+// Ao entrar na aba do mapa, garante que ele já existe e recalcula o
+// tamanho (necessário porque ele estava com display:none)
+if(indice === 1){
+inicializarMapaSeNecessario();
+setTimeout(()=>{
+mapa.invalidateSize();
+atualizarMapa();
+}, 100);
+}
+
+}
+
+// Suporte a "jogar para o lado" (swipe) para trocar de aba no celular
+(function configurarSwipe(){
+const area = document.getElementById('areaAbas');
+let inicioX = 0;
+let inicioY = 0;
+
+area.addEventListener('touchstart', function(e){
+inicioX = e.touches[0].clientX;
+inicioY = e.touches[0].clientY;
+}, {passive:true});
+
+area.addEventListener('touchend', function(e){
+const fimX = e.changedTouches[0].clientX;
+const fimY = e.changedTouches[0].clientY;
+const deltaX = fimX - inicioX;
+const deltaY = fimY - inicioY;
+
+// Só considera swipe horizontal (ignora rolagem vertical da lista/mapa)
+if(Math.abs(deltaX) > 60 && Math.abs(deltaX) > Math.abs(deltaY) * 1.5){
+if(deltaX < 0){
+irParaAba(abaAtual + 1); // arrastou para a esquerda -> próxima aba
+}else{
+irParaAba(abaAtual - 1); // arrastou para a direita -> aba anterior
+}
+}
+}, {passive:true});
+})();
 
 // ----------------------------------------------------------------------
 // INICIALIZAÇÃO
