@@ -219,10 +219,10 @@ animation:pulsoUsuario 2s infinite;
 
 /* Pin estilo "etiqueta" (Mercado Livre) */
 .pin-etiqueta{
-width:30px;
-height:30px;
-border-radius:8px 8px 8px 2px;
-transform:rotate(45deg);
+width:32px;
+height:32px;
+border-radius:50% 50% 50% 0;
+transform:rotate(-45deg);
 display:flex;
 align-items:center;
 justify-content:center;
@@ -231,7 +231,7 @@ border:2px solid white;
 }
 
 .pin-etiqueta span{
-transform:rotate(-45deg);
+transform:rotate(45deg);
 color:white;
 font-size:12px;
 font-weight:bold;
@@ -556,7 +556,7 @@ Importar Rota
 <span id="resumoMapaTexto">0 pendentes</span>
 </div>
 
-<button id="botaoCentralizar" onclick="centralizarMinhaLocalizacao()" title="Centralizar na minha localização">🎯</button>
+<button id="botaoCentralizar" onclick="centralizarMinhaLocalizacao()" title="Centralizar na minha localização e voltar ao norte">🎯</button>
 
 <div id="fundoInfoMapa" onclick="fecharInfoMapa()"></div>
 <div id="painelInfoMapa">
@@ -1105,8 +1105,13 @@ attribution: '&copy; OpenStreetMap contributors'
 }
 
 // Volta o mapa para a orientação normal (norte para cima)
-// Centraliza o mapa na localização atual do usuário
+// Centraliza o mapa na localização atual do usuário e endireita para o norte
 function centralizarMinhaLocalizacao(){
+
+if(typeof mapa.setBearing === 'function'){
+mapa.setBearing(0);
+}
+
 if(meuMarcador){
 mapa.setView(meuMarcador.getLatLng(), Math.max(mapa.getZoom(), 16));
 }else{
@@ -1248,9 +1253,9 @@ const rotulo = ehStopValido(grupo.stop) ? grupo.stop : '★';
 const icone = L.divIcon({
 html: `<div class="pin-etiqueta" style="background:${corPorStatus(grupo.status)}"><span>${rotulo}</span></div>`,
 className:'',
-iconSize:[30,30],
-iconAnchor:[15,26],
-popupAnchor:[0,-26]
+iconSize:[32,32],
+iconAnchor:[16,30],
+popupAnchor:[0,-30]
 });
 
 const marcador = L.marker([lat,lng], {icon: icone}).addTo(mapa);
