@@ -1560,7 +1560,8 @@ function destacarMarcador(id){
 
 if(marcadorSelecionadoId && marcadores[marcadorSelecionadoId]){
 const elAnterior = marcadores[marcadorSelecionadoId].getElement();
-if(elAnterior) elAnterior.classList.remove('marcador-selecionado');
+const pinAnterior = elAnterior ? elAnterior.querySelector('.pin-mapa') : null;
+if(pinAnterior) pinAnterior.classList.remove('marcador-selecionado');
 marcadores[marcadorSelecionadoId].setZIndexOffset(0);
 }
 
@@ -1568,7 +1569,8 @@ marcadorSelecionadoId = id;
 
 if(id && marcadores[id]){
 const el = marcadores[id].getElement();
-if(el) el.classList.add('marcador-selecionado');
+const pin = el ? el.querySelector('.pin-mapa') : null;
+if(pin) pin.classList.add('marcador-selecionado');
 marcadores[id].setZIndexOffset(1000);
 }
 
