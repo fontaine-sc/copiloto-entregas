@@ -497,6 +497,17 @@ font-size:15.5px;
 color:#222;
 }
 
+.badge-total-parada{
+display:inline-block;
+margin-top:8px;
+padding:6px 12px;
+border-radius:8px;
+background:#ffe4cc;
+color:#a34c00;
+font-weight:700;
+font-size:13.5px;
+}
+
 .sub-local{
 border-left:4px solid #ff6a00;
 padding:10px 0 8px 12px;
@@ -1234,8 +1245,10 @@ ${construirConteudoLocal(grupo)}
 }else{
 
 let subLocaisHtml = "";
+let totalPacotesBloco = 0;
 
 bloco.forEach(item=>{
+totalPacotesBloco += item.pacotes.length;
 subLocaisHtml += `
 <div class="sub-local status-${item.status}" id="grupo_${item.id}">
 ${construirConteudoLocal(item)}
@@ -1246,6 +1259,7 @@ ${construirConteudoLocal(item)}
 lista.innerHTML += `
 <div class="parada-composta">
 <h3>${tituloParada(grupo)}</h3>
+<div class="badge-total-parada">📦 ${totalPacotesBloco} pacote(s) ao todo nesta parada</div>
 ${subLocaisHtml}
 </div>
 `;
