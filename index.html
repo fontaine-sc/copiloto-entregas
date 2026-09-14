@@ -481,6 +481,37 @@ box-shadow:none;
 border-left-color:#e74c3c;
 }
 
+/* Parada composta: um só cabeçalho, várias localizações dentro
+(ex: Parada 5 com casa 43, casa 45, casa 1 - mesma família/parada) */
+.parada-composta{
+background:white;
+padding:16px;
+border-radius:16px;
+margin-bottom:12px;
+box-shadow:0 3px 12px rgba(20,20,20,.06);
+}
+
+.parada-composta > h3{
+margin:0;
+font-size:15.5px;
+color:#222;
+}
+
+.sub-local{
+border-left:4px solid #ff6a00;
+padding:10px 0 8px 12px;
+margin-top:12px;
+}
+
+.sub-local.status-entregue{
+border-left-color:#9ca3af;
+opacity:.65;
+}
+
+.sub-local.status-ocorrencia{
+border-left-color:#e74c3c;
+}
+
 .endereco{
 margin-top:6px;
 font-size:14.5px;
@@ -1062,26 +1093,10 @@ if(!nomeCompleto) return "";
 return String(nomeCompleto).trim().split(/\s+/)[0];
 }
 
-function renderizarTudo(){
-
-const lista =
-document.getElementById("lista");
-
-lista.innerHTML = "";
-
-const ordenados = listaPrincipal();
-
-document.getElementById("locais")
-.innerText = grupos.length;
-
-let divisoriaEntreguesInserida = false;
-
-ordenados.forEach((grupo)=>{
-
-if(grupo.status === 'entregue' && !divisoriaEntreguesInserida){
-lista.innerHTML += `<div class="divisoria-entregues"><span>✅ Entregues</span></div>`;
-divisoriaEntreguesInserida = true;
-}
+// Monta o conteúdo interno de UMA localização (endereço, status, pacotes,
+// Waze e botões de ação) - usado tanto para paradas sozinhas quanto para
+// cada "sub-local" dentro de uma Parada composta (ex: casa 43/45/1).
+function construirConteudoLocal(grupo){
 
 let htmlPacotes = "";
 
@@ -1120,16 +1135,7 @@ const motivoHtml = (grupo.status === 'ocorrencia' && grupo.motivo)
 ? `<div class="motivo-texto">Motivo: ${grupo.motivo}</div>`
 : "";
 
-// Pacotes ficam ocultos automaticamente quando a parada é entregue
-const pacotesEstiloAberto = (grupo.status === 'entregue') ? "none" : null;
-
-lista.innerHTML += `
-
-<div class="grupo status-${grupo.status}" id="grupo_${grupo.id}">
-
-<h3>
-${tituloParada(grupo)}
-</h3>
+return `
 
 <div class="endereco">
 ${grupo.endereco}
@@ -1171,11 +1177,84 @@ Abrir no Waze</button>
 <button class="desfazer-btn" onclick="desfazerStatus('${grupo.id}')">↩️ Desfazer</button>
 </div>
 
-</div>
-
 `;
 
+}
+
+function renderizarTudo(){
+
+const lista =
+document.getElementById("lista");
+
+lista.innerHTML = "";
+
+const ordenados = listaPrincipal();
+
+document.getElementById("locais")
+.innerText = grupos.length;
+
+let divisoriaEntreguesInserida = false;
+
+// Agrupa visualmente execuções consecutivas com o mesmo número de Parada
+// (só na aba Lista - o mapa e a aba Ocorrências continuam tratando cada
+// endereço como um item independente, sem nenhuma mudança lá).
+let i = 0;
+
+while(i < ordenados.length){
+
+const grupo = ordenados[i];
+
+if(grupo.status === 'entregue' && !divisoriaEntreguesInserida){
+lista.innerHTML += `<div class="divisoria-entregues"><span>✅ Entregues</span></div>`;
+divisoriaEntreguesInserida = true;
+}
+
+const bloco = [grupo];
+let j = i + 1;
+
+while(
+j < ordenados.length &&
+ehStopValido(grupo.stop) &&
+ordenados[j].stop === grupo.stop &&
+ordenados[j].status === grupo.status
+){
+bloco.push(ordenados[j]);
+j++;
+}
+
+if(bloco.length === 1){
+
+lista.innerHTML += `
+<div class="grupo status-${grupo.status}" id="grupo_${grupo.id}">
+<h3>${tituloParada(grupo)}</h3>
+${construirConteudoLocal(grupo)}
+</div>
+`;
+
+}else{
+
+let subLocaisHtml = "";
+
+bloco.forEach(item=>{
+subLocaisHtml += `
+<div class="sub-local status-${item.status}" id="grupo_${item.id}">
+${construirConteudoLocal(item)}
+</div>
+`;
 });
+
+lista.innerHTML += `
+<div class="parada-composta">
+<h3>${tituloParada(grupo)}</h3>
+${subLocaisHtml}
+</div>
+`;
+
+}
+
+i = j;
+
+}
 
 atualizarEstatisticas();
 atualizarMapa();
