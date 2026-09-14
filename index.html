@@ -579,6 +579,13 @@ color:#555;
 margin-top:4px;
 }
 
+.nome-cliente-pacote{
+font-size:13.5px;
+font-weight:600;
+color:#333;
+margin-top:3px;
+}
+
 .leaflet-popup-content{
 font-family:Arial,sans-serif;
 }
@@ -920,7 +927,8 @@ cluster.grupo.pacotes.push({
 
 codigo:codigo,
 endereco:endereco,
-stop:stopTexto
+stop:stopTexto,
+destinatario:destinatario
 
 });
 
@@ -1087,6 +1095,8 @@ htmlPacotes += `
 ${pacote.codigo}
 </div>
 
+${pacote.destinatario ? `<div class="nome-cliente-pacote">👤 ${primeiroNome(pacote.destinatario)}</div>` : ''}
+
 <div class="detalhe">
 ${pacote.endereco}
 </div>
@@ -1192,6 +1202,7 @@ grupo.pacotes.forEach(pacote=>{
 htmlPacotes += `
 <div class="pacote">
 <div class="codigo">${pacote.codigo}</div>
+${pacote.destinatario ? `<div class="nome-cliente-pacote">👤 ${primeiroNome(pacote.destinatario)}</div>` : ''}
 <div class="detalhe">${pacote.endereco}</div>
 </div>
 `;
