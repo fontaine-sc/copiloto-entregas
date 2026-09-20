@@ -1113,22 +1113,23 @@ return false;
 }
 
 // Reforça com o nome da rua: se além do número, a rua também bate,
-// e os dois tiverem essa informação, aumenta a confiança de que são
-// o mesmo prédio de fato (mesmo sem apto/unidade mencionados).
+// e os dois tiverem essa informação, é o mesmo prédio - MESMO que os
+// apartamentos sejam diferentes. Isso é seguro agora porque cada pacote
+// já controla seu próprio status individual (ver "Ocorrência só neste
+// pacote"), então não precisamos mais separar por apto pra isso.
 const ruaENumeroBatem = !!(ruaA && ruaB && numeroA && numeroB && ruaA === ruaB && numeroA === numeroB);
 
+if(ruaENumeroBatem){
+return true;
+}
+
+// 2ª camada: sem rua+número suficiente pra confirmar o prédio, usa
+// unidade/apto/bloco como pista de que é o mesmo local.
 const unidadeA = assinaturaUnidade(enderecoA);
 const unidadeB = assinaturaUnidade(enderecoB);
 
-// 2ª camada: se os dois endereços mencionam unidade/apto/bloco,
-// isso manda mais que rua/número (mesmo prédio, unidades diferentes).
 if(unidadeA && unidadeB){
 return unidadeA === unidadeB;
-}
-
-// Rua + número batendo nos dois, sem unidade pra desempatar -> mesmo local
-if(ruaENumeroBatem){
-return true;
 }
 
 // 3ª camada: sem informação de endereço suficiente, decide pela
