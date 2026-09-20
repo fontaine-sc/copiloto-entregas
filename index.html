@@ -1025,6 +1025,118 @@ mapaFoiEnquadrado = false; // nova rota -> próximo enquadramento do mapa deve s
 salvarStorage();
 renderizarTudo();
 
+// Corrige em segundo plano coordenadas ausentes/claramente erradas,
+// sem travar a tela (a rota já aparece normalmente enquanto isso roda)
+corrigirCoordenadasAusentes();
+
+}
+
+// ----------------------------------------------------------------------
+// CORREÇÃO DE COORDENADAS AUSENTES/ERRADAS A PARTIR DO ENDEREÇO
+// Só entra em ação quando a Latitude/Longitude da planilha está vazia
+// ou claramente fora do Brasil - não mexe em coordenadas que já parecem
+// corretas, pra não gastar tempo/cota à toa.
+// ----------------------------------------------------------------------
+
+function coordenadaValida(lat, lng){
+const latN = parseFloat(lat);
+const lngN = parseFloat(lng);
+if(isNaN(latN) || isNaN(lngN)) return false;
+if(latN === 0 && lngN === 0) return false;
+// faixa aproximada do território brasileiro
+if(latN > 6 || latN < -34 || lngN > -30 || lngN < -75) return false;
+return true;
+}
+
+function esperar(ms){
+return new Promise(resolver => setTimeout(resolver, ms));
+}
+
+async function geocodificarEndereco(endereco){
+try{
+const url = "https://nominatim.openstreetmap.org/search?format=json&limit=1&countrycodes=br&q=" + encodeURIComponent(endereco);
+const resposta = await fetch(url, { headers: { "Accept-Language": "pt-BR" } });
+if(!resposta.ok) return null;
+const dados = await resposta.json();
+if(dados && dados.length > 0){
+return { lat: dados[0].lat, lng: dados[0].lon };
+}
+}catch(erro){
+console.warn("Falha ao buscar coordenada para:", endereco, erro);
+}
+return null;
+}
+
+async function corrigirCoordenadasAusentes(){
+
+const candidatos = grupos.filter(g => !coordenadaValida(g.lat, g.lng));
+
+if(candidatos.length === 0) return;
+
+mostrarToast(`🔍 Corrigindo ${candidatos.length} coordenada(s)...`, 'neutro');
+
+let corrigidas = 0;
+
+for(const grupo of candidatos){
+
+const resultado = await geocodificarEndereco(grupo.endereco);
+
+if(resultado){
+grupo.lat = resultado.lat;
+grupo.lng = resultado.lng;
+corrigidas++;
+}
+
+// Respeita o limite de uso do serviço gratuito (1 consulta por segundo)
+await esperar(1100);
+
+}
+
+if(corrigidas > 0){
+salvarStorage();
+renderizarTudo();
+mostrarToast(`✅ ${corrigidas} coordenada(s) corrigida(s)`, 'sucesso');
+}
+
+}
+
+// Verificação sob demanda de UMA parada específica, acionada pelo botão
+// "🔍 Verificar localização" no painel do mapa. Sempre busca de novo,
+// mesmo que a coordenada atual pareça válida - útil quando o pin está
+// no lugar errado mas dentro do Brasil (então a checagem automática
+// da importação não pegaria isso sozinha).
+async function verificarLocalizacaoPin(id){
+
+const grupo = encontrarGrupo(id);
+if(!grupo) return;
+
+fecharInfoMapa();
+mostrarToast('🔍 Verificando localização...', 'neutro');
+
+const resultado = await geocodificarEndereco(grupo.endereco);
+
+if(!resultado){
+mostrarToast('⚠️ Não foi possível verificar esse endereço', 'alerta');
+return;
+}
+
+const latAntiga = parseFloat(grupo.lat);
+const lngAntiga = parseFloat(grupo.lng);
+const distanciaMudanca = (!isNaN(latAntiga) && !isNaN(lngAntiga))
+? distanciaMetros(latAntiga, lngAntiga, parseFloat(resultado.lat), parseFloat(resultado.lng))
+: null;
+
+grupo.lat = resultado.lat;
+grupo.lng = resultado.lng;
+salvarStorage();
+renderizarTudo();
+
+if(distanciaMudanca !== null && distanciaMudanca < 15){
+mostrarToast('✅ Localização já estava correta', 'sucesso');
+}else{
+mostrarToast('✅ Localização corrigida no mapa', 'sucesso');
+}
+
 }
 
 // ----------------------------------------------------------------------
@@ -1850,6 +1962,7 @@ ${badgeStatusGrupoHtml(grupo)}
 
 <button class="waze" onclick="abrirWaze('${grupo.lat}','${grupo.lng}')">Abrir no Waze</button>
 <button class="toggle" onclick="verNaLista('${grupo.id}')">📋 Ver na lista</button>
+<button class="toggle" onclick="verificarLocalizacaoPin('${grupo.id}')">🔍 Verificar localização</button>
 
 <div class="btn-linha">
 <button class="entregue-btn" onclick="acaoNoPainelInfo('${grupo.id}','entregue')">✅ Entregue</button>
