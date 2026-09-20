@@ -592,6 +592,46 @@ font-size:13px;
 .badge-status.pendente{ background:#fff3cd; color:#7a5b00; }
 .badge-status.entregue{ background:#e5e7eb; color:#374151; }
 .badge-status.ocorrencia{ background:#fbdada; color:#8c1c1c; }
+.badge-status.misto{ background:#ffe8d1; color:#a34c00; font-size:12px; }
+
+.pacote-status-entregue{ opacity:.6; }
+.pacote-status-ocorrencia{ background:#fff5f5; border-radius:8px; padding:8px !important; margin:4px 0; }
+
+.entregue-pacote-texto{
+margin-top:6px;
+font-size:12.5px;
+font-weight:700;
+color:#1f7a3d;
+}
+
+.ocorrencia-pacote-texto{
+margin-top:6px;
+font-size:12.5px;
+font-weight:700;
+color:#8c1c1c;
+}
+
+.ocorrencia-pacote-btn{
+width:auto;
+margin-top:8px;
+padding:6px 10px;
+font-size:12px;
+font-weight:600;
+background:#fdeaea;
+color:#c0392b;
+border-radius:8px;
+}
+
+.desfazer-pacote-btn{
+width:auto;
+margin-top:6px;
+padding:6px 10px;
+font-size:12px;
+font-weight:600;
+background:#eee;
+color:#555;
+border-radius:8px;
+}
 
 .motivo-texto{
 font-size:13px;
@@ -832,7 +872,7 @@ let mapa = null;
 let marcadores = {};
 let meuMarcador = null;
 let idRastreamento = null;
-let grupoAguardandoMotivo = null;
+// (alvoAguardandoMotivo é declarado mais abaixo, junto da lógica de status)
 let abaAtual = 0; // 0 = Lista, 1 = Mapa, 2 = Ocorrências
 let mapaFoiEnquadrado = false; // controla se já demos fitBounds (evita resetar o zoom)
 const CHAVE_STORAGE = "copiloto_entregas_rota_atual";
@@ -951,9 +991,8 @@ lat:lat,
 lng:lng,
 stop:paradaBase,
 destinatario:destinatario,
-pacotes:[],
-status:'pendente',
-motivo:null
+pacotes:[]
+// status não fica mais aqui - é calculado por pacote (ver statusEfetivoGrupo)
 }
 };
 
@@ -970,7 +1009,9 @@ cluster.grupo.pacotes.push({
 codigo:codigo,
 endereco:endereco,
 stop:stopTexto,
-destinatario:destinatario
+destinatario:destinatario,
+status:'pendente',
+motivo:null
 
 });
 
@@ -1014,6 +1055,30 @@ if(encontrados.length === 0) return null;
 return encontrados.sort().join("|");
 }
 
+// Pega o nome da rua (texto antes da primeira vírgula) e normaliza
+// abreviações comuns, pra "R." e "Rua" contarem como igual.
+function nomeRua(enderecoNormalizado){
+let rua = (enderecoNormalizado.split(",")[0] || "").trim();
+rua = rua
+.replace(/^r\.?\s+/, "rua ")
+.replace(/^av\.?\s+/, "avenida ")
+.replace(/^al\.?\s+/, "alameda ")
+.replace(/^tv\.?\s+/, "travessa ")
+.replace(/^estr\.?\s+/, "estrada ")
+.trim();
+return rua || null;
+}
+
+// Pega o número da casa/prédio: o primeiro número logo após o nome da
+// rua (formato típico "Rua Tal, 349, ..."). Se não achar vírgula, tenta
+// o primeiro número isolado do endereço como último recurso.
+function numeroCasa(enderecoNormalizado){
+let m = enderecoNormalizado.match(/,\s*(\d+)\b/);
+if(m) return m[1];
+m = enderecoNormalizado.match(/\b(\d{1,6})\b/);
+return m ? m[1] : null;
+}
+
 // Distância real em metros entre duas coordenadas (fórmula de Haversine)
 function distanciaMetros(lat1, lng1, lat2, lng2){
 const R = 6371000;
@@ -1035,17 +1100,39 @@ function paradasMesmoLocal(a, b){
 const enderecoA = normalizarTexto(a.endereco);
 const enderecoB = normalizarTexto(b.endereco);
 
+const ruaA = nomeRua(enderecoA);
+const ruaB = nomeRua(enderecoB);
+const numeroA = numeroCasa(enderecoA);
+const numeroB = numeroCasa(enderecoB);
+
+// 1ª camada (a mais forte): número da casa/prédio diferente = SEMPRE
+// locais diferentes, mesmo que a coordenada esteja bem perto - é
+// exatamente o caso de duas casas vizinhas com GPS parecido.
+if(numeroA && numeroB && numeroA !== numeroB){
+return false;
+}
+
+// Reforça com o nome da rua: se além do número, a rua também bate,
+// e os dois tiverem essa informação, aumenta a confiança de que são
+// o mesmo prédio de fato (mesmo sem apto/unidade mencionados).
+const ruaENumeroBatem = !!(ruaA && ruaB && numeroA && numeroB && ruaA === ruaB && numeroA === numeroB);
+
 const unidadeA = assinaturaUnidade(enderecoA);
 const unidadeB = assinaturaUnidade(enderecoB);
 
-// 1ª camada: se os dois endereços mencionam unidade/apto/bloco,
-// isso manda mais que qualquer coordenada.
+// 2ª camada: se os dois endereços mencionam unidade/apto/bloco,
+// isso manda mais que rua/número (mesmo prédio, unidades diferentes).
 if(unidadeA && unidadeB){
 return unidadeA === unidadeB;
 }
 
-// 2ª camada: sem informação de unidade em pelo menos um dos dois,
-// decide pela distância real entre as coordenadas.
+// Rua + número batendo nos dois, sem unidade pra desempatar -> mesmo local
+if(ruaENumeroBatem){
+return true;
+}
+
+// 3ª camada: sem informação de endereço suficiente, decide pela
+// distância real entre as coordenadas.
 const latA = parseFloat(a.lat);
 const lngA = parseFloat(a.lng);
 const latB = parseFloat(b.lat);
@@ -1074,17 +1161,19 @@ function listaOrdenada(){
 return grupos
 .map((g,indiceOriginal)=>({g,indiceOriginal}))
 .sort((a,b)=>{
-const diff = ordemStatus(a.g.status) - ordemStatus(b.g.status);
+const diff = ordemStatus(statusEfetivoGrupo(a.g)) - ordemStatus(statusEfetivoGrupo(b.g));
 if(diff !== 0) return diff;
 return a.indiceOriginal - b.indiceOriginal;
 })
 .map(x=>x.g);
 }
 
-// Lista da aba principal: só pendentes e entregues.
-// Ocorrências saem daqui e aparecem exclusivamente na aba "Ocorrências".
+// Lista da aba principal: some daqui só quando TODOS os pacotes da parada
+// estão em ocorrência (falha total - nada mais a fazer ali). Casos mistos
+// (ex: 4 entregues + 1 ocorrência) continuam aqui, porque ainda há
+// trabalho pendente/ativo nessa parada.
 function listaPrincipal(){
-return listaOrdenada().filter(g => g.status !== 'ocorrencia');
+return listaOrdenada().filter(g => !g.pacotes.every(p => p.status === 'ocorrencia'));
 }
 
 // Um Stop é considerado "de verdade" quando existe e não é só um
@@ -1111,11 +1200,24 @@ function construirConteudoLocal(grupo){
 
 let htmlPacotes = "";
 
-grupo.pacotes.forEach(pacote=>{
+grupo.pacotes.forEach((pacote, indice)=>{
+
+let acaoPacoteHtml = "";
+
+if(pacote.status === 'ocorrencia'){
+acaoPacoteHtml = `
+<div class="ocorrencia-pacote-texto">⚠️ Ocorrência${pacote.motivo ? ': ' + pacote.motivo : ''}</div>
+<button class="desfazer-pacote-btn" onclick="desfazerStatusPacote('${grupo.id}', ${indice})">↩️ Desfazer este pacote</button>
+`;
+}else{
+acaoPacoteHtml = `
+<button class="ocorrencia-pacote-btn" onclick="abrirModalMotivoPacote('${grupo.id}', ${indice})">⚠️ Ocorrência só neste pacote</button>
+`;
+}
 
 htmlPacotes += `
 
-<div class="pacote">
+<div class="pacote pacote-status-${pacote.status}">
 
 <div class="codigo">
 ${pacote.codigo}
@@ -1127,24 +1229,15 @@ ${pacote.destinatario ? `<div class="nome-cliente-pacote">👤 ${primeiroNome(pa
 ${pacote.endereco}
 </div>
 
+${pacote.status === 'entregue' ? '<div class="entregue-pacote-texto">✅ Entregue</div>' : acaoPacoteHtml}
+
 </div>
 
 `;
 
 });
 
-let badgeStatusHtml = "";
-if(grupo.status === 'entregue'){
-badgeStatusHtml = `<span class="badge-status entregue">✅ Entregue</span>`;
-} else if(grupo.status === 'ocorrencia'){
-badgeStatusHtml = `<span class="badge-status ocorrencia">⚠️ Ocorrência</span>`;
-} else {
-badgeStatusHtml = `<span class="badge-status pendente">🟡 Pendente</span>`;
-}
-
-const motivoHtml = (grupo.status === 'ocorrencia' && grupo.motivo)
-? `<div class="motivo-texto">Motivo: ${grupo.motivo}</div>`
-: "";
+const badgeStatusHtml = badgeStatusGrupoHtml(grupo);
 
 return `
 
@@ -1157,7 +1250,6 @@ ${grupo.pacotes.length}
 pacote(s) neste local
 </div>
 ${badgeStatusHtml}
-${motivoHtml}
 
 <button
 class="toggle"
@@ -1214,8 +1306,9 @@ let i = 0;
 while(i < ordenados.length){
 
 const grupo = ordenados[i];
+const statusGrupo = statusEfetivoGrupo(grupo);
 
-if(grupo.status === 'entregue' && !divisoriaEntreguesInserida){
+if(statusGrupo === 'entregue' && !divisoriaEntreguesInserida){
 lista.innerHTML += `<div class="divisoria-entregues"><span>✅ Entregues</span></div>`;
 divisoriaEntreguesInserida = true;
 }
@@ -1227,7 +1320,7 @@ while(
 j < ordenados.length &&
 ehStopValido(grupo.stop) &&
 ordenados[j].stop === grupo.stop &&
-ordenados[j].status === grupo.status
+statusEfetivoGrupo(ordenados[j]) === statusGrupo
 ){
 bloco.push(ordenados[j]);
 j++;
@@ -1236,7 +1329,7 @@ j++;
 if(bloco.length === 1){
 
 lista.innerHTML += `
-<div class="grupo status-${grupo.status}" id="grupo_${grupo.id}">
+<div class="grupo status-${statusGrupo}" id="grupo_${grupo.id}">
 <h3>${tituloParada(grupo)}</h3>
 ${construirConteudoLocal(grupo)}
 </div>
@@ -1250,7 +1343,7 @@ let totalPacotesBloco = 0;
 bloco.forEach(item=>{
 totalPacotesBloco += item.pacotes.length;
 subLocaisHtml += `
-<div class="sub-local status-${item.status}" id="grupo_${item.id}">
+<div class="sub-local status-${statusEfetivoGrupo(item)}" id="grupo_${item.id}">
 ${construirConteudoLocal(item)}
 </div>
 `;
@@ -1279,7 +1372,7 @@ renderizarOcorrencias();
 function renderizarOcorrencias(){
 
 const container = document.getElementById('listaOcorrencias');
-const ocorrencias = grupos.filter(g => g.status === 'ocorrencia');
+const ocorrencias = grupos.filter(g => g.pacotes.some(p => p.status === 'ocorrencia'));
 
 if(ocorrencias.length === 0){
 container.innerHTML = `<div class="aviso-vazio">Nenhuma ocorrência no momento 🎉</div>`;
@@ -1291,23 +1384,39 @@ container.innerHTML = "";
 ocorrencias.forEach(grupo=>{
 
 let htmlPacotes = "";
-grupo.pacotes.forEach(pacote=>{
+
+grupo.pacotes.forEach((pacote, indice)=>{
+
+let acaoPacoteHtml = "";
+
+if(pacote.status === 'ocorrencia'){
+acaoPacoteHtml = `
+<div class="ocorrencia-pacote-texto">⚠️ Ocorrência${pacote.motivo ? ': ' + pacote.motivo : ''}</div>
+<button class="desfazer-pacote-btn" onclick="desfazerStatusPacote('${grupo.id}', ${indice})">↩️ Desfazer este pacote</button>
+`;
+}else{
+acaoPacoteHtml = `
+<button class="ocorrencia-pacote-btn" onclick="abrirModalMotivoPacote('${grupo.id}', ${indice})">⚠️ Ocorrência só neste pacote</button>
+`;
+}
+
 htmlPacotes += `
-<div class="pacote">
+<div class="pacote pacote-status-${pacote.status}">
 <div class="codigo">${pacote.codigo}</div>
 ${pacote.destinatario ? `<div class="nome-cliente-pacote">👤 ${primeiroNome(pacote.destinatario)}</div>` : ''}
 <div class="detalhe">${pacote.endereco}</div>
+${pacote.status === 'entregue' ? '<div class="entregue-pacote-texto">✅ Entregue</div>' : acaoPacoteHtml}
 </div>
 `;
+
 });
 
 container.innerHTML += `
-<div class="grupo status-ocorrencia" id="grupo_oc_${grupo.id}">
+<div class="grupo status-${statusEfetivoGrupo(grupo)}" id="grupo_oc_${grupo.id}">
 <h3>${tituloParada(grupo)}</h3>
 <div class="endereco">${grupo.endereco}</div>
 <div class="badge">${grupo.pacotes.length} pacote(s) neste local</div>
-<span class="badge-status ocorrencia">⚠️ Ocorrência</span>
-${grupo.motivo ? `<div class="motivo-texto">Motivo: ${grupo.motivo}</div>` : ""}
+${badgeStatusGrupoHtml(grupo)}
 
 <button class="toggle" onclick="alternarPacotes('oc_${grupo.id}')">Mostrar/Ocultar pacotes</button>
 <div id="pacotes_oc_${grupo.id}" class="pacotes">${htmlPacotes}</div>
@@ -1369,55 +1478,147 @@ window.open(
 }
 
 // ----------------------------------------------------------------------
-// V4.1 - STATUS DA PARADA (Entregue / Ocorrência / Desfazer)
+// V4.1 - STATUS (agora por PACOTE, não mais por parada inteira)
+// Os botões grandes continuam agindo em massa (toda a parada de uma vez);
+// cada pacote também pode ter seu próprio status individual, para os
+// casos em que só 1 de vários pacotes no mesmo local dá problema.
 // ----------------------------------------------------------------------
 
 function encontrarGrupo(id){
 return grupos.find(g => g.id === id);
 }
 
+// Calcula o status "efetivo" da parada a partir dos pacotes dela:
+// só é 'entregue' se TODOS os pacotes estiverem entregues; é 'ocorrencia'
+// se PELO MENOS UM pacote estiver com ocorrência (mesmo com outros já
+// entregues); caso contrário, é 'pendente'.
+function statusEfetivoGrupo(grupo){
+if(grupo.pacotes.every(p => p.status === 'entregue')) return 'entregue';
+if(grupo.pacotes.some(p => p.status === 'ocorrencia')) return 'ocorrencia';
+return 'pendente';
+}
+
+// Monta o selo de status da parada, já considerando casos mistos
+// (ex: 4 entregues e 1 com ocorrência no mesmo local)
+function badgeStatusGrupoHtml(grupo){
+
+const total = grupo.pacotes.length;
+const entregues = grupo.pacotes.filter(p => p.status === 'entregue').length;
+const ocorrencias = grupo.pacotes.filter(p => p.status === 'ocorrencia').length;
+const pendentes = total - entregues - ocorrencias;
+
+const misto = (ocorrencias > 0 && (entregues > 0 || pendentes > 0));
+
+if(misto){
+let partes = [];
+if(pendentes > 0) partes.push(`🟡 ${pendentes} pendente(s)`);
+if(entregues > 0) partes.push(`✅ ${entregues} entregue(s)`);
+if(ocorrencias > 0) partes.push(`⚠️ ${ocorrencias} ocorrência(s)`);
+return `<span class="badge-status misto">${partes.join(' · ')}</span>`;
+}
+
+if(entregues === total) return `<span class="badge-status entregue">✅ Entregue</span>`;
+if(ocorrencias === total) return `<span class="badge-status ocorrencia">⚠️ Ocorrência</span>`;
+return `<span class="badge-status pendente">🟡 Pendente</span>`;
+
+}
+
+// Ação em massa (botão grande "Entregue"): marca como entregue todo
+// pacote que ainda não estiver com ocorrência registrada individualmente
+// - assim não sobrescreve uma exceção que você já marcou pacote a pacote.
 function marcarEntregue(id){
 const grupo = encontrarGrupo(id);
 if(!grupo) return;
-grupo.status = 'entregue';
-grupo.motivo = null;
-// "Entregue recolhe os pacotes automaticamente" -> lista de pacotes fecha
+grupo.pacotes.forEach(p => {
+if(p.status !== 'ocorrencia'){
+p.status = 'entregue';
+}
+});
 salvarStorage();
 renderizarTudo();
 mostrarToast('✅ Entrega confirmada', 'sucesso');
 }
 
+// Alvo do modal de motivo: pode ser a parada inteira ({tipo:'grupo'}) ou
+// um pacote específico dentro dela ({tipo:'pacote', indice}).
+let alvoAguardandoMotivo = null;
+
 function abrirModalMotivo(id){
-grupoAguardandoMotivo = id;
+alvoAguardandoMotivo = { tipo:'grupo', grupoId:id };
+document.getElementById('modalMotivo').classList.add('aberto');
+}
+
+// Exceção individual: marca ocorrência só num pacote específico da lista,
+// sem afetar os demais pacotes daquela mesma parada.
+function abrirModalMotivoPacote(grupoId, indice){
+alvoAguardandoMotivo = { tipo:'pacote', grupoId:grupoId, indice:indice };
 document.getElementById('modalMotivo').classList.add('aberto');
 }
 
 function fecharModalMotivo(){
-grupoAguardandoMotivo = null;
+alvoAguardandoMotivo = null;
 document.getElementById('modalMotivo').classList.remove('aberto');
 }
 
 function confirmarOcorrencia(motivo){
-if(!grupoAguardandoMotivo) return;
-const grupo = encontrarGrupo(grupoAguardandoMotivo);
+
+if(!alvoAguardandoMotivo){ fecharModalMotivo(); return; }
+
+const grupo = encontrarGrupo(alvoAguardandoMotivo.grupoId);
+
 if(grupo){
-grupo.status = 'ocorrencia';
-grupo.motivo = motivo;
-salvarStorage();
-renderizarTudo();
+
+if(alvoAguardandoMotivo.tipo === 'grupo'){
+// Ação em massa: toda a parada (todos os pacotes) vira ocorrência
+grupo.pacotes.forEach(p => {
+p.status = 'ocorrencia';
+p.motivo = motivo;
+});
 mostrarToast('⚠️ Ocorrência registrada', 'alerta');
+}else{
+// Exceção: só o pacote específico vira ocorrência
+const pacote = grupo.pacotes[alvoAguardandoMotivo.indice];
+if(pacote){
+pacote.status = 'ocorrencia';
+pacote.motivo = motivo;
+mostrarToast('⚠️ Ocorrência registrada nesse pacote', 'alerta');
 }
-fecharModalMotivo();
 }
 
+salvarStorage();
+renderizarTudo();
+
+}
+
+fecharModalMotivo();
+
+}
+
+// Ação em massa (botão grande "Desfazer"): volta todos os pacotes da
+// parada para pendente, inclusive os que tinham ocorrência individual.
 function desfazerStatus(id){
 const grupo = encontrarGrupo(id);
 if(!grupo) return;
-grupo.status = 'pendente';
-grupo.motivo = null;
+grupo.pacotes.forEach(p => {
+p.status = 'pendente';
+p.motivo = null;
+});
 salvarStorage();
 renderizarTudo();
 mostrarToast('↩️ Status desfeito', 'neutro');
+}
+
+// Desfazer individual: volta só 1 pacote específico para pendente
+function desfazerStatusPacote(grupoId, indice){
+const grupo = encontrarGrupo(grupoId);
+if(!grupo) return;
+const pacote = grupo.pacotes[indice];
+if(!pacote) return;
+pacote.status = 'pendente';
+pacote.motivo = null;
+salvarStorage();
+renderizarTudo();
+mostrarToast('↩️ Pacote voltou a pendente', 'neutro');
 }
 
 // ----------------------------------------------------------------------
@@ -1455,31 +1656,26 @@ toast.classList.remove('aparecer');
 function atualizarEstatisticas(){
 
 const totalParadas = grupos.length;
-const pendentes = grupos.filter(g=>g.status==='pendente').length;
-const entregues = grupos.filter(g=>g.status==='entregue').length;
-const ocorrencias = grupos.filter(g=>g.status==='ocorrencia').length;
+const todosPacotes = grupos.flatMap(g => g.pacotes);
 
-document.getElementById('qtdPendentes').innerText = pendentes;
-document.getElementById('qtdEntregues').innerText = entregues;
-document.getElementById('qtdOcorrencias').innerText = ocorrencias;
+const pacotesPendentes = todosPacotes.filter(p => p.status === 'pendente').length;
+const pacotesEntregues = todosPacotes.filter(p => p.status === 'entregue').length;
+const pacotesOcorrencia = todosPacotes.filter(p => p.status === 'ocorrencia').length;
 
-// Contadores das abas = quantidade de PACOTES (não de paradas).
-// Um pacote só conta em um lugar por vez: pendente conta na Lista,
-// e assim que a parada vira Ocorrência, os pacotes saem da Lista e
-// passam a contar só na aba Ocorrências.
-const pacotesPendentes = grupos
-.filter(g => g.status === 'pendente')
-.reduce((acc,g) => acc + g.pacotes.length, 0);
+// Os cards de estatística agora mostram quantidade de PACOTES, não de
+// paradas - fica mais preciso quando uma parada tem status misto
+// (alguns pacotes entregues, outro com ocorrência, no mesmo local).
+document.getElementById('qtdPendentes').innerText = pacotesPendentes;
+document.getElementById('qtdEntregues').innerText = pacotesEntregues;
+document.getElementById('qtdOcorrencias').innerText = pacotesOcorrencia;
 
-const pacotesOcorrencia = grupos
-.filter(g => g.status === 'ocorrencia')
-.reduce((acc,g) => acc + g.pacotes.length, 0);
-
+// Contadores das abas = mesma base (quantidade de pacotes)
 document.getElementById('contadorLista').innerText = pacotesPendentes;
 document.getElementById('contadorOcorrencias').innerText = pacotesOcorrencia;
 
-const percentual = totalParadas > 0
-? Math.round((entregues / totalParadas) * 100)
+const totalPacotes = todosPacotes.length;
+const percentual = totalPacotes > 0
+? Math.round((pacotesEntregues / totalPacotes) * 100)
 : 0;
 
 const barra = document.getElementById('barraProgresso');
@@ -1609,26 +1805,13 @@ return '#ff6a00'; // laranja padrão Shopee, igual ao resto do site
 // ----- Painel inferior (bottom sheet) ao clicar num pin do mapa -----
 
 function conteudoInfoHtml(grupo){
-const motivoHtml = (grupo.status === 'ocorrencia' && grupo.motivo)
-? `<div class="motivo-texto">Motivo: ${grupo.motivo}</div>`
-: '';
-
-let badgeStatusHtml = "";
-if(grupo.status === 'entregue'){
-badgeStatusHtml = `<span class="badge-status entregue">✅ Entregue</span>`;
-} else if(grupo.status === 'ocorrencia'){
-badgeStatusHtml = `<span class="badge-status ocorrencia">⚠️ Ocorrência</span>`;
-} else {
-badgeStatusHtml = `<span class="badge-status pendente">🟡 Pendente</span>`;
-}
 
 return `
 <h3 style="margin:0;">${tituloParada(grupo)}</h3>
 ${grupo.destinatario ? `<div class="nome-destinatario">👤 ${primeiroNome(grupo.destinatario)}</div>` : ''}
 <div class="endereco">${grupo.endereco}</div>
 <div class="badge">${grupo.pacotes.length} pacote(s) neste local</div>
-${badgeStatusHtml}
-${motivoHtml}
+${badgeStatusGrupoHtml(grupo)}
 
 <button class="waze" onclick="abrirWaze('${grupo.lat}','${grupo.lng}')">Abrir no Waze</button>
 <button class="toggle" onclick="verNaLista('${grupo.id}')">📋 Ver na lista</button>
@@ -1733,7 +1916,7 @@ if(!grupo) return;
 
 fecharInfoMapa();
 
-if(grupo.status === 'ocorrencia'){
+if(grupo.pacotes.some(p => p.status === 'ocorrencia')){
 irParaAba(2);
 setTimeout(()=> destacarElemento('grupo_oc_' + id), 200);
 }else{
@@ -1751,7 +1934,9 @@ setTimeout(()=> el.classList.remove('destaque-temporario'), 1600);
 }
 
 function atualizarResumoMapa(){
-const pendentes = grupos.filter(g => g.status === 'pendente').length;
+const pendentes = grupos
+.flatMap(g => g.pacotes)
+.filter(p => p.status === 'pendente').length;
 document.getElementById('resumoMapaTexto').innerText = pendentes + ' pendente(s)';
 }
 
@@ -1773,7 +1958,7 @@ if(isNaN(lat) || isNaN(lng)) return;
 const rotulo = ehStopValido(grupo.stop) ? grupo.stop : '★';
 
 const icone = L.divIcon({
-html: `<div class="pin-mapa" style="color:${corPorStatus(grupo.status)}"><div class="pin-corpo"><span>${rotulo}</span></div></div>`,
+html: `<div class="pin-mapa" style="color:${corPorStatus(statusEfetivoGrupo(grupo))}"><div class="pin-corpo"><span>${rotulo}</span></div></div>`,
 className:'',
 iconSize:[34,46],
 iconAnchor:[17,46],
