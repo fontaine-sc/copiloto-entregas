@@ -1055,6 +1055,2036 @@ if(encontrados.length === 0) return null;
 return encontrados.sort().join("|");
 }
 
+// Posições (início/fim) dos números que pertencem a uma menção de
+// apto/bloco/unidade - usado pra não confundir esses números com o
+// número da casa/prédio.
+function posicoesDeNumeroDeUnidade(enderecoNormalizado){
+const regex = /\b(?:apto|ap|apartamento|unidade|un|casa|bloco|bl|sala|loja|lote|quadra|qd)\.?\s*([a-z0-9\-]+)/gi;
+const posicoes = [];
+let m;
+while((m = regex.exec(enderecoNormalizado)) !== null){
+const inicioValor = m.index + m[0].length - m[1].length;
+posicoes.push({ inicio: inicioValor, fim: inicioValor + m[1].length });
+}
+return posicoes;
+}
+
+// Acha o nome da rua e o número da casa/prédio juntos: o número da casa
+// é o primeiro número "livre" do endereço (que não faz parte de um
+// "apto X"/"bloco Y"), esteja ele separado por vírgula ou não
+// (cobre tanto "Rua Tal, 349" quanto "Rua Tal 349"). A rua é tudo que
+// vem antes desse número.
+function extrairRuaENumero(enderecoNormalizado){
+
+const numeroRegex = /\d+/g;
+const posicoesUnidade = posicoesDeNumeroDeUnidade(enderecoNormalizado);
+let m;
+
+while((m = numeroRegex.exec(enderecoNormalizado)) !== null){
+
+const dentroDeUnidade = posicoesUnidade.some(
+p => m.index >= p.inicio && m.index < p.fim
+);
+
+if(!dentroDeUnidade){
+
+let rua = enderecoNormalizado
+.slice(0, m.index)
+.replace(/,\s*$/, "")
+.trim();
+
+rua = rua
+.replace(/^r\.?\s+/, "rua ")
+.replace(/^av\.?\s+/, "avenida ")
+.replace(/^al\.?\s+/, "alameda ")
+.replace(/^tv\.?\s+/, "travessa ")
+.replace(/^estr\.?\s+/, "estrada ")
+.trim();
+
+return { rua: rua || null, numero: m[0] };
+
+}
+
+}
+
+return { rua: null, numero: null };
+
+}
+
+// Distância real em metros entre duas coordenadas (fórmula de Haversine)
+function distanciaMetros(lat1, lng1, lat2, lng2){
+const R = 6371000;
+const rad = Math.PI / 180;
+const dLat = (lat2 - lat1) * rad;
+const dLng = (lng2 - lng1) * rad;
+const a = Math.sin(dLat/2) ** 2 +
+Math.cos(lat1 * rad) * Math.cos(lat2 * rad) * Math.sin(dLng/2) ** 2;
+const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+return R * c;
+}
+
+// Raio (em metros) dentro do qual duas coordenadas ainda contam como
+// "o mesmo prédio/local", cobrindo a variação natural do GPS.
+const RAIO_MESMO_LOCAL_METROS = 25;
+
+function paradasMesmoLocal(a, b){
+
+const enderecoA = normalizarTexto(a.endereco);
+const enderecoB = normalizarTexto(b.endereco);
+
+const infoA = extrairRuaENumero(enderecoA);
+const infoB = extrairRuaENumero(enderecoB);
+const ruaA = infoA.rua;
+const ruaB = infoB.rua;
+const numeroA = infoA.numero;
+const numeroB = infoB.numero;
+
+// 1ª camada (a mais forte): número da casa/prédio diferente = SEMPRE
+// locais diferentes, mesmo que a coordenada esteja bem perto - é
+// exatamente o caso de duas casas vizinhas com GPS parecido.
+if(numeroA && numeroB && numeroA !== numeroB){
+return false;
+}
+
+// Reforça com o nome da rua: se além do número, a rua também bate,
+// e os dois tiverem essa informação, é o mesmo prédio - MESMO que os
+// apartamentos sejam diferentes. Isso é seguro agora porque cada pacote
+// já controla seu próprio status individual (ver "Ocorrência só neste
+// pacote"), então não precisamos mais separar por apto pra isso.
+const ruaENumeroBatem = !!(ruaA && ruaB && numeroA && numeroB && ruaA === ruaB && numeroA === numeroB);
+
+if(ruaENumeroBatem){
+return true;
+}
+
+// 2ª camada: sem rua+número suficiente pra confirmar o prédio, usa
+// unidade/apto/bloco como pista de que é o mesmo local.
+const unidadeA = assinaturaUnidade(enderecoA);
+const unidadeB = assinaturaUnidade(enderecoB);
+
+if(unidadeA && unidadeB){
+return unidadeA === unidadeB;
+}
+
+// 3ª camada: sem informação de endereço suficiente, decide pela
+// distância real entre as coordenadas.
+const latA = parseFloat(a.lat);
+const lngA = parseFloat(a.lng);
+const latB = parseFloat(b.lat);
+const lngB = parseFloat(b.lng);
+
+if(!isNaN(latA) && !isNaN(lngA) && !isNaN(latB) && !isNaN(lngB)){
+return distanciaMetros(latA, lngA, latB, lngB) <= RAIO_MESMO_LOCAL_METROS;
+}
+
+// Último recurso (sem coordenada nenhuma): compara o texto normalizado
+return enderecoA === enderecoB;
+
+}
+
+// ----------------------------------------------------------------------
+// ORDENAÇÃO E RENDERIZAÇÃO DA LISTA
+// ----------------------------------------------------------------------
+
+function ordemStatus(status){
+if(status === 'pendente') return 0;
+if(status === 'ocorrencia') return 1;
+return 2; // entregue vai para o final
+}
+
+function listaOrdenada(){
+return grupos
+.map((g,indiceOriginal)=>({g,indiceOriginal}))
+.sort((a,b)=>{
+const diff = ordemStatus(statusEfetivoGrupo(a.g)) - ordemStatus(statusEfetivoGrupo(b.g));
+if(diff !== 0) return diff;
+return a.indiceOriginal - b.indiceOriginal;
+})
+.map(x=>x.g);
+}
+
+// Lista da aba principal: some daqui só quando TODOS os pacotes da parada
+// estão em ocorrência (falha total - nada mais a fazer ali). Casos mistos
+// (ex: 4 entregues + 1 ocorrência) continuam aqui, porque ainda há
+// trabalho pendente/ativo nessa parada.
+function listaPrincipal(){
+return listaOrdenada().filter(g => !g.pacotes.every(p => p.status === 'ocorrencia'));
+}
+
+// Um Stop é considerado "de verdade" quando existe e não é só um
+// traço/vazio. Cobre casos de planilha sem coluna Stop, Stop vazio
+// ou com valor "-" (o que antes aparecia errado como "Parada -").
+function ehStopValido(stop){
+return !!stop && String(stop).trim() !== '' && String(stop).trim() !== '-';
+}
+
+function tituloParada(grupo){
+return ehStopValido(grupo.stop) ? ("📍 Parada " + grupo.stop) : "⭐ Extra";
+}
+
+// Extrai só o primeiro nome do destinatário (evita expor o sobrenome completo)
+function primeiroNome(nomeCompleto){
+if(!nomeCompleto) return "";
+return String(nomeCompleto).trim().split(/\s+/)[0];
+}
+
+// Monta o conteúdo interno de UMA localização (endereço, status, pacotes,
+// Waze e botões de ação) - usado tanto para paradas sozinhas quanto para
+// cada "sub-local" dentro de uma Parada composta (ex: casa 43/45/1).
+function construirConteudoLocal(grupo){
+
+let htmlPacotes = "";
+
+grupo.pacotes.forEach((pacote, indice)=>{
+
+let acaoPacoteHtml = "";
+
+if(pacote.status === 'ocorrencia'){
+acaoPacoteHtml = `
+<div class="ocorrencia-pacote-texto">⚠️ Ocorrência${pacote.motivo ? ': ' + pacote.motivo : ''}</div>
+<button class="desfazer-pacote-btn" onclick="desfazerStatusPacote('${grupo.id}', ${indice})">↩️ Desfazer este pacote</button>
+`;
+}else{
+acaoPacoteHtml = `
+<button class="ocorrencia-pacote-btn" onclick="abrirModalMotivoPacote('${grupo.id}', ${indice})">⚠️ Ocorrência só neste pacote</button>
+`;
+}
+
+htmlPacotes += `
+
+<div class="pacote pacote-status-${pacote.status}">
+
+<div class="codigo">
+${pacote.codigo}
+</div>
+
+${pacote.destinatario ? `<div class="nome-cliente-pacote">👤 ${primeiroNome(pacote.destinatario)}</div>` : ''}
+
+<div class="detalhe">
+${pacote.endereco}
+</div>
+
+${pacote.status === 'entregue' ? '<div class="entregue-pacote-texto">✅ Entregue</div>' : acaoPacoteHtml}
+
+</div>
+
+`;
+
+});
+
+const badgeStatusHtml = badgeStatusGrupoHtml(grupo);
+
+return `
+
+<div class="endereco">
+${grupo.endereco}
+</div>
+
+<div class="badge">
+${grupo.pacotes.length}
+pacote(s) neste local
+</div>
+${badgeStatusHtml}
+
+<button
+class="toggle"
+onclick="alternarPacotes('${grupo.id}')">
+Mostrar/Ocultar pacotes
+</button>
+
+<div
+id="pacotes_${grupo.id}"
+class="pacotes">
+
+${htmlPacotes}
+
+</div>
+
+<button
+class="waze"
+onclick="
+abrirWaze(
+'${grupo.lat}',
+'${grupo.lng}'
+)">
+Abrir no Waze</button>
+
+<div class="btn-linha">
+<button class="entregue-btn" onclick="marcarEntregue('${grupo.id}')">✅ Entregue</button>
+<button class="ocorrencia-btn" onclick="abrirModalMotivo('${grupo.id}')">⚠️ Ocorrência</button>
+<button class="desfazer-btn" onclick="desfazerStatus('${grupo.id}')">↩️ Desfazer</button>
+</div>
+
+`;
+
+}
+
+function renderizarTudo(){
+
+const lista =
+document.getElementById("lista");
+
+lista.innerHTML = "";
+
+const ordenados = listaPrincipal();
+
+document.getElementById("locais")
+.innerText = grupos.length;
+
+let divisoriaEntreguesInserida = false;
+
+// Agrupa visualmente execuções consecutivas com o mesmo número de Parada
+// (só na aba Lista - o mapa e a aba Ocorrências continuam tratando cada
+// endereço como um item independente, sem nenhuma mudança lá).
+let i = 0;
+
+while(i < ordenados.length){
+
+const grupo = ordenados[i];
+const statusGrupo = statusEfetivoGrupo(grupo);
+
+if(statusGrupo === 'entregue' && !divisoriaEntreguesInserida){
+lista.innerHTML += `<div class="divisoria-entregues"><span>✅ Entregues</span></div>`;
+divisoriaEntreguesInserida = true;
+}
+
+const bloco = [grupo];
+let j = i + 1;
+
+while(
+j < ordenados.length &&
+ehStopValido(grupo.stop) &&
+ordenados[j].stop === grupo.stop &&
+statusEfetivoGrupo(ordenados[j]) === statusGrupo
+){
+bloco.push(ordenados[j]);
+j++;
+}
+
+if(bloco.length === 1){
+
+lista.innerHTML += `
+<div class="grupo status-${statusGrupo}" id="grupo_${grupo.id}">
+<h3>${tituloParada(grupo)}</h3>
+${construirConteudoLocal(grupo)}
+</div>
+`;
+
+}else{
+
+let subLocaisHtml = "";
+let totalPacotesBloco = 0;
+
+bloco.forEach(item=>{
+totalPacotesBloco += item.pacotes.length;
+subLocaisHtml += `
+<div class="sub-local status-${statusEfetivoGrupo(item)}" id="grupo_${item.id}">
+${construirConteudoLocal(item)}
+</div>
+`;
+});
+
+lista.innerHTML += `
+<div class="parada-composta">
+<h3>${tituloParada(grupo)}</h3>
+<div class="badge-total-parada">📦 ${totalPacotesBloco} pacote(s) ao todo nesta parada</div>
+${subLocaisHtml}
+</div>
+`;
+
+}
+
+i = j;
+
+}
+
+atualizarEstatisticas();
+atualizarMapa();
+renderizarOcorrencias();
+
+}
+
+function renderizarOcorrencias(){
+
+const container = document.getElementById('listaOcorrencias');
+const ocorrencias = grupos.filter(g => g.pacotes.some(p => p.status === 'ocorrencia'));
+
+if(ocorrencias.length === 0){
+container.innerHTML = `<div class="aviso-vazio">Nenhuma ocorrência no momento 🎉</div>`;
+return;
+}
+
+container.innerHTML = "";
+
+ocorrencias.forEach(grupo=>{
+
+let htmlPacotes = "";
+
+grupo.pacotes.forEach((pacote, indice)=>{
+
+let acaoPacoteHtml = "";
+
+if(pacote.status === 'ocorrencia'){
+acaoPacoteHtml = `
+<div class="ocorrencia-pacote-texto">⚠️ Ocorrência${pacote.motivo ? ': ' + pacote.motivo : ''}</div>
+<button class="desfazer-pacote-btn" onclick="desfazerStatusPacote('${grupo.id}', ${indice})">↩️ Desfazer este pacote</button>
+`;
+}else{
+acaoPacoteHtml = `
+<button class="ocorrencia-pacote-btn" onclick="abrirModalMotivoPacote('${grupo.id}', ${indice})">⚠️ Ocorrência só neste pacote</button>
+`;
+}
+
+htmlPacotes += `
+<div class="pacote pacote-status-${pacote.status}">
+<div class="codigo">${pacote.codigo}</div>
+${pacote.destinatario ? `<div class="nome-cliente-pacote">👤 ${primeiroNome(pacote.destinatario)}</div>` : ''}
+<div class="detalhe">${pacote.endereco}</div>
+${pacote.status === 'entregue' ? '<div class="entregue-pacote-texto">✅ Entregue</div>' : acaoPacoteHtml}
+</div>
+`;
+
+});
+
+container.innerHTML += `
+<div class="grupo status-${statusEfetivoGrupo(grupo)}" id="grupo_oc_${grupo.id}">
+<h3>${tituloParada(grupo)}</h3>
+<div class="endereco">${grupo.endereco}</div>
+<div class="badge">${grupo.pacotes.length} pacote(s) neste local</div>
+${badgeStatusGrupoHtml(grupo)}
+
+<button class="toggle" onclick="alternarPacotes('oc_${grupo.id}')">Mostrar/Ocultar pacotes</button>
+<div id="pacotes_oc_${grupo.id}" class="pacotes">${htmlPacotes}</div>
+
+<button class="waze" onclick="abrirWaze('${grupo.lat}','${grupo.lng}')">Abrir no Waze</button>
+
+<div class="btn-linha">
+<button class="entregue-btn" onclick="marcarEntregue('${grupo.id}')">✅ Entregue</button>
+<button class="desfazer-btn" onclick="desfazerStatus('${grupo.id}')">↩️ Desfazer</button>
+</div>
+</div>
+`;
+
+});
+
+}
+
+function alternarPacotes(id){
+
+const elemento =
+document.getElementById(
+"pacotes_" + id
+);
+
+if(
+elemento.style.display ===
+"block"
+){
+
+elemento.style.display =
+"none";
+
+}else{
+
+elemento.style.display =
+"block";
+
+}
+
+}
+
+function abrirWaze(lat,lng){
+
+if(!lat || !lng){
+
+alert(
+"Latitude ou Longitude não encontrada."
+);
+
+return;
+
+}
+
+window.open(
+`https://waze.com/ul?ll=${lat},${lng}&navigate=yes`,
+'_blank'
+);
+
+}
+
+// ----------------------------------------------------------------------
+// V4.1 - STATUS (agora por PACOTE, não mais por parada inteira)
+// Os botões grandes continuam agindo em massa (toda a parada de uma vez);
+// cada pacote também pode ter seu próprio status individual, para os
+// casos em que só 1 de vários pacotes no mesmo local dá problema.
+// ----------------------------------------------------------------------
+
+function encontrarGrupo(id){
+return grupos.find(g => g.id === id);
+}
+
+// Calcula o status "efetivo" da parada a partir dos pacotes dela:
+// só é 'entregue' se TODOS os pacotes estiverem entregues; é 'ocorrencia'
+// se PELO MENOS UM pacote estiver com ocorrência (mesmo com outros já
+// entregues); caso contrário, é 'pendente'.
+function statusEfetivoGrupo(grupo){
+if(grupo.pacotes.every(p => p.status === 'entregue')) return 'entregue';
+if(grupo.pacotes.some(p => p.status === 'ocorrencia')) return 'ocorrencia';
+return 'pendente';
+}
+
+// Monta o selo de status da parada, já considerando casos mistos
+// (ex: 4 entregues e 1 com ocorrência no mesmo local)
+function badgeStatusGrupoHtml(grupo){
+
+const total = grupo.pacotes.length;
+const entregues = grupo.pacotes.filter(p => p.status === 'entregue').length;
+const ocorrencias = grupo.pacotes.filter(p => p.status === 'ocorrencia').length;
+const pendentes = total - entregues - ocorrencias;
+
+const misto = (ocorrencias > 0 && (entregues > 0 || pendentes > 0));
+
+if(misto){
+let partes = [];
+if(pendentes > 0) partes.push(`🟡 ${pendentes} pendente(s)`);
+if(entregues > 0) partes.push(`✅ ${entregues} entregue(s)`);
+if(ocorrencias > 0) partes.push(`⚠️ ${ocorrencias} ocorrência(s)`);
+return `<span class="badge-status misto">${partes.join(' · ')}</span>`;
+}
+
+if(entregues === total) return `<span class="badge-status entregue">✅ Entregue</span>`;
+if(ocorrencias === total) return `<span class="badge-status ocorrencia">⚠️ Ocorrência</span>`;
+return `<span class="badge-status pendente">🟡 Pendente</span>`;
+
+}
+
+// Ação em massa (botão grande "Entregue"): marca como entregue todo
+// pacote que ainda não estiver com ocorrência registrada individualmente
+// - assim não sobrescreve uma exceção que você já marcou pacote a pacote.
+function marcarEntregue(id){
+const grupo = encontrarGrupo(id);
+if(!grupo) return;
+grupo.pacotes.forEach(p => {
+if(p.status !== 'ocorrencia'){
+p.status = 'entregue';
+}
+});
+salvarStorage();
+renderizarTudo();
+mostrarToast('✅ Entrega confirmada', 'sucesso');
+}
+
+// Alvo do modal de motivo: pode ser a parada inteira ({tipo:'grupo'}) ou
+// um pacote específico dentro dela ({tipo:'pacote', indice}).
+let alvoAguardandoMotivo = null;
+
+function abrirModalMotivo(id){
+alvoAguardandoMotivo = { tipo:'grupo', grupoId:id };
+document.getElementById('modalMotivo').classList.add('aberto');
+}
+
+// Exceção individual: marca ocorrência só num pacote específico da lista,
+// sem afetar os demais pacotes daquela mesma parada.
+function abrirModalMotivoPacote(grupoId, indice){
+alvoAguardandoMotivo = { tipo:'pacote', grupoId:grupoId, indice:indice };
+document.getElementById('modalMotivo').classList.add('aberto');
+}
+
+function fecharModalMotivo(){
+alvoAguardandoMotivo = null;
+document.getElementById('modalMotivo').classList.remove('aberto');
+}
+
+function confirmarOcorrencia(motivo){
+
+if(!alvoAguardandoMotivo){ fecharModalMotivo(); return; }
+
+const grupo = encontrarGrupo(alvoAguardandoMotivo.grupoId);
+
+if(grupo){
+
+if(alvoAguardandoMotivo.tipo === 'grupo'){
+// Ação em massa: toda a parada (todos os pacotes) vira ocorrência
+grupo.pacotes.forEach(p => {
+p.status = 'ocorrencia';
+p.motivo = motivo;
+});
+mostrarToast('⚠️ Ocorrência registrada', 'alerta');
+}else{
+// Exceção: só o pacote específico vira ocorrência
+const pacote = grupo.pacotes[alvoAguardandoMotivo.indice];
+if(pacote){
+pacote.status = 'ocorrencia';
+pacote.motivo = motivo;
+mostrarToast('⚠️ Ocorrência registrada nesse pacote', 'alerta');
+}
+}
+
+salvarStorage();
+renderizarTudo();
+
+}
+
+fecharModalMotivo();
+
+}
+
+// Ação em massa (botão grande "Desfazer"): volta todos os pacotes da
+// parada para pendente, inclusive os que tinham ocorrência individual.
+function desfazerStatus(id){
+const grupo = encontrarGrupo(id);
+if(!grupo) return;
+grupo.pacotes.forEach(p => {
+p.status = 'pendente';
+p.motivo = null;
+});
+salvarStorage();
+renderizarTudo();
+mostrarToast('↩️ Status desfeito', 'neutro');
+}
+
+// Desfazer individual: volta só 1 pacote específico para pendente
+function desfazerStatusPacote(grupoId, indice){
+const grupo = encontrarGrupo(grupoId);
+if(!grupo) return;
+const pacote = grupo.pacotes[indice];
+if(!pacote) return;
+pacote.status = 'pendente';
+pacote.motivo = null;
+salvarStorage();
+renderizarTudo();
+mostrarToast('↩️ Pacote voltou a pendente', 'neutro');
+}
+
+// ----------------------------------------------------------------------
+// TOAST DE CONFIRMAÇÃO (animação rápida ao marcar status)
+// ----------------------------------------------------------------------
+
+let idTimeoutToast = null;
+
+function mostrarToast(mensagem, tipo){
+
+let toast = document.getElementById('toastCopiloto');
+
+if(!toast){
+toast = document.createElement('div');
+toast.id = 'toastCopiloto';
+document.body.appendChild(toast);
+}
+
+toast.textContent = mensagem;
+toast.className = 'toast-copiloto toast-' + tipo + ' aparecer';
+
+// Reinicia o timer se o usuário disparar outra ação rapidinho em seguida
+if(idTimeoutToast) clearTimeout(idTimeoutToast);
+
+idTimeoutToast = setTimeout(()=>{
+toast.classList.remove('aparecer');
+}, 1600);
+
+}
+
+// ----------------------------------------------------------------------
+// V6 - ESTATÍSTICAS DA ROTA
+// ----------------------------------------------------------------------
+
+function atualizarEstatisticas(){
+
+const totalParadas = grupos.length;
+const todosPacotes = grupos.flatMap(g => g.pacotes);
+
+const pacotesPendentes = todosPacotes.filter(p => p.status === 'pendente').length;
+const pacotesEntregues = todosPacotes.filter(p => p.status === 'entregue').length;
+const pacotesOcorrencia = todosPacotes.filter(p => p.status === 'ocorrencia').length;
+
+// Os cards de estatística agora mostram quantidade de PACOTES, não de
+// paradas - fica mais preciso quando uma parada tem status misto
+// (alguns pacotes entregues, outro com ocorrência, no mesmo local).
+document.getElementById('qtdPendentes').innerText = pacotesPendentes;
+document.getElementById('qtdEntregues').innerText = pacotesEntregues;
+document.getElementById('qtdOcorrencias').innerText = pacotesOcorrencia;
+
+// Contadores das abas = mesma base (quantidade de pacotes)
+document.getElementById('contadorLista').innerText = pacotesPendentes;
+document.getElementById('contadorOcorrencias').innerText = pacotesOcorrencia;
+
+const totalPacotes = todosPacotes.length;
+const percentual = totalPacotes > 0
+? Math.round((pacotesEntregues / totalPacotes) * 100)
+: 0;
+
+const barra = document.getElementById('barraProgresso');
+barra.style.width = percentual + '%';
+barra.innerText = percentual + '%';
+
+}
+
+// ----------------------------------------------------------------------
+// V4.2 - PERSISTÊNCIA COM localStorage
+// ----------------------------------------------------------------------
+
+function salvarStorage(){
+try{
+localStorage.setItem(CHAVE_STORAGE, JSON.stringify(grupos));
+}catch(erro){
+console.error("Não foi possível salvar a rota localmente:", erro);
+}
+}
+
+function carregarStorage(){
+try{
+const salvo = localStorage.getItem(CHAVE_STORAGE);
+if(!salvo) return;
+grupos = JSON.parse(salvo);
+
+const totalPacotes = grupos.reduce((acc,g)=>acc + g.pacotes.length, 0);
+document.getElementById("pacotes").innerText = totalPacotes;
+
+renderizarTudo();
+}catch(erro){
+console.error("Não foi possível carregar a rota salva:", erro);
+}
+}
+
+// ----------------------------------------------------------------------
+// V5 - MAPA INTEGRADO (Leaflet)
+// ----------------------------------------------------------------------
+
+function inicializarMapaSeNecessario(){
+if(mapa) return;
+
+mapa = L.map('mapa', {
+rotate: true,        // habilita a rotação do mapa
+touchRotate: true,    // gira com o gesto de dois dedos no celular
+rotateControl: false, // vamos usar nosso próprio botão de bússola
+bearing: 0
+}).setView([-23.5505,-46.6333], 12);
+
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+maxZoom: 19,
+attribution: '&copy; OpenStreetMap contributors'
+}).addTo(mapa);
+
+}
+
+// Volta o mapa para a orientação normal (norte para cima)
+// Centraliza o mapa na localização atual do usuário e endireita para o norte
+function centralizarMinhaLocalizacao(){
+
+if(typeof mapa.setBearing === 'function'){
+mapa.setBearing(0);
+}
+
+if(meuMarcador){
+mapa.setView(meuMarcador.getLatLng(), Math.max(mapa.getZoom(), 16));
+}else{
+alert("Ainda não conseguimos sua localização. Verifique se a permissão de localização está ativada.");
+iniciarRastreamentoLocalizacao();
+}
+}
+
+// Mostra a localização do usuário no mapa e vai atualizando conforme ele anda
+function iniciarRastreamentoLocalizacao(){
+
+if(!navigator.geolocation){
+console.warn("Geolocalização não é suportada neste navegador.");
+return;
+}
+
+if(idRastreamento !== null) return; // já está rastreando
+
+idRastreamento = navigator.geolocation.watchPosition(
+function(posicao){
+
+const lat = posicao.coords.latitude;
+const lng = posicao.coords.longitude;
+
+if(!meuMarcador){
+
+const icone = L.divIcon({
+html: '<div class="pin-usuario"></div>',
+className:'',
+iconSize:[18,18],
+iconAnchor:[9,9]
+});
+
+meuMarcador = L.marker([lat,lng], {icon:icone, zIndexOffset:1000}).addTo(mapa);
+
+// Na primeira localização, centraliza o mapa nela também
+mapa.setView([lat,lng], 15);
+
+}else{
+// Só atualiza a posição - não mexe mais no zoom/centralização do usuário
+meuMarcador.setLatLng([lat,lng]);
+}
+
+},
+function(erro){
+console.warn("Não foi possível obter a localização:", erro.message);
+},
+{
+enableHighAccuracy:true,
+maximumAge:5000,
+timeout:15000
+}
+);
+
+}
+
+function corPorStatus(status){
+if(status === 'entregue') return '#9ca3af';
+if(status === 'ocorrencia') return '#e74c3c';
+return '#ff6a00'; // laranja padrão Shopee, igual ao resto do site
+}
+
+// ----- Painel inferior (bottom sheet) ao clicar num pin do mapa -----
+
+function conteudoInfoHtml(grupo){
+
+return `
+<h3 style="margin:0;">${tituloParada(grupo)}</h3>
+${grupo.destinatario ? `<div class="nome-destinatario">👤 ${primeiroNome(grupo.destinatario)}</div>` : ''}
+<div class="endereco">${grupo.endereco}</div>
+<div class="badge">${grupo.pacotes.length} pacote(s) neste local</div>
+${badgeStatusGrupoHtml(grupo)}
+
+<button class="waze" onclick="abrirWaze('${grupo.lat}','${grupo.lng}')">Abrir no Waze</button>
+<button class="toggle" onclick="verNaLista('${grupo.id}')">📋 Ver na lista</button>
+
+<div class="btn-linha">
+<button class="entregue-btn" onclick="acaoNoPainelInfo('${grupo.id}','entregue')">✅ Entregue</button>
+<button class="ocorrencia-btn" onclick="acaoNoPainelInfo('${grupo.id}','ocorrencia')">⚠️ Ocorrência</button>
+<button class="desfazer-btn" onclick="acaoNoPainelInfo('${grupo.id}','desfazer')">↩️ Desfazer</button>
+</div>
+`;
+}
+
+let marcadorSelecionadoId = null;
+
+function abrirInfoMapa(id){
+const grupo = encontrarGrupo(id);
+if(!grupo) return;
+document.getElementById('conteudoInfoMapa').innerHTML = conteudoInfoHtml(grupo);
+document.getElementById('fundoInfoMapa').classList.add('aberto');
+document.getElementById('painelInfoMapa').classList.add('aberto');
+destacarMarcador(id);
+}
+
+function fecharInfoMapa(){
+document.getElementById('fundoInfoMapa').classList.remove('aberto');
+document.getElementById('painelInfoMapa').classList.remove('aberto');
+destacarMarcador(null);
+}
+
+// Dá destaque visual ao marcador da parada selecionada (maior, com anel
+// laranja), tirando o destaque do que estava selecionado antes.
+function destacarMarcador(id){
+
+if(marcadorSelecionadoId && marcadores[marcadorSelecionadoId]){
+const elAnterior = marcadores[marcadorSelecionadoId].getElement();
+const pinAnterior = elAnterior ? elAnterior.querySelector('.pin-mapa') : null;
+if(pinAnterior) pinAnterior.classList.remove('marcador-selecionado');
+marcadores[marcadorSelecionadoId].setZIndexOffset(0);
+}
+
+marcadorSelecionadoId = id;
+
+if(id && marcadores[id]){
+const el = marcadores[id].getElement();
+const pin = el ? el.querySelector('.pin-mapa') : null;
+if(pin) pin.classList.add('marcador-selecionado');
+marcadores[id].setZIndexOffset(1000);
+}
+
+}
+
+// ----------------------------------------------------------------------
+// CLIQUE "INTELIGENTE" NO MAPA: quando há paradas muito próximas/
+// sobrepostas na tela, cliques repetidos no mesmo ponto ciclam entre
+// elas, em vez de sempre reabrir a mesma parada de cima.
+// ----------------------------------------------------------------------
+
+const RAIO_CICLO_PIXELS = 24;
+let estadoCicloClique = { ponto:null, indice:0 };
+
+function aoClicarMarcador(grupoIdClicado, evento){
+
+const pontoClique = mapa.mouseEventToContainerPoint(evento.originalEvent);
+
+// Todos os marcadores cujo ícone está perto (na tela) do ponto clicado
+const candidatos = Object.keys(marcadores)
+.map(id => ({ id, ponto: mapa.latLngToContainerPoint(marcadores[id].getLatLng()) }))
+.filter(m => pontoClique.distanceTo(m.ponto) <= RAIO_CICLO_PIXELS)
+.sort((a,b) => pontoClique.distanceTo(a.ponto) - pontoClique.distanceTo(b.ponto));
+
+if(candidatos.length <= 1){
+estadoCicloClique = { ponto:null, indice:0 };
+abrirInfoMapa(grupoIdClicado);
+return;
+}
+
+const cliqueNoMesmoPonto = estadoCicloClique.ponto &&
+pontoClique.distanceTo(estadoCicloClique.ponto) <= RAIO_CICLO_PIXELS;
+
+estadoCicloClique.indice = cliqueNoMesmoPonto
+? (estadoCicloClique.indice + 1) % candidatos.length
+: 0;
+
+estadoCicloClique.ponto = pontoClique;
+
+abrirInfoMapa(candidatos[estadoCicloClique.indice].id);
+
+}
+
+// Ações disparadas de dentro do painel inferior do mapa
+function acaoNoPainelInfo(id, acao){
+if(acao === 'entregue') marcarEntregue(id);
+if(acao === 'ocorrencia'){ fecharInfoMapa(); abrirModalMotivo(id); return; }
+if(acao === 'desfazer') desfazerStatus(id);
+fecharInfoMapa();
+}
+
+// Leva o usuário até o card da parada na aba Lista (ou Ocorrências, se for o caso)
+function verNaLista(id){
+const grupo = encontrarGrupo(id);
+if(!grupo) return;
+
+fecharInfoMapa();
+
+if(grupo.pacotes.some(p => p.status === 'ocorrencia')){
+irParaAba(2);
+setTimeout(()=> destacarElemento('grupo_oc_' + id), 200);
+}else{
+irParaAba(0);
+setTimeout(()=> destacarElemento('grupo_' + id), 200);
+}
+}
+
+function destacarElemento(elementId){
+const el = document.getElementById(elementId);
+if(!el) return;
+el.scrollIntoView({behavior:'smooth', block:'center'});
+el.classList.add('destaque-temporario');
+setTimeout(()=> el.classList.remove('destaque-temporario'), 1600);
+}
+
+function atualizarResumoMapa(){
+const pendentes = grupos
+.flatMap(g => g.pacotes)
+.filter(p => p.status === 'pendente').length;
+document.getElementById('resumoMapaTexto').innerText = pendentes + ' pendente(s)';
+}
+
+function atualizarMapa(){
+
+if(!mapa) return;
+
+Object.values(marcadores).forEach(m => mapa.removeLayer(m));
+marcadores = {};
+
+const pontosValidos = [];
+
+grupos.forEach(grupo=>{
+
+const lat = parseFloat(grupo.lat);
+const lng = parseFloat(grupo.lng);
+if(isNaN(lat) || isNaN(lng)) return;
+
+const rotulo = ehStopValido(grupo.stop) ? grupo.stop : '★';
+
+const icone = L.divIcon({
+html: `<div class="pin-mapa" style="color:${corPorStatus(statusEfetivoGrupo(grupo))}"><div class="pin-corpo"><span>${rotulo}</span></div></div>`,
+className:'',
+iconSize:[34,46],
+iconAnchor:[17,46],
+popupAnchor:[0,-46]
+});
+
+const marcador = L.marker([lat,lng], {icon: icone}).addTo(mapa);
+marcador.on('click', function(e){ aoClicarMarcador(grupo.id, e); });
+marcadores[grupo.id] = marcador;
+
+pontosValidos.push([lat,lng]);
+
+});
+
+if(pontosValidos.length > 0 && !mapaFoiEnquadrado){
+mapa.fitBounds(pontosValidos, {padding:[30,30]});
+mapaFoiEnquadrado = true;
+}
+
+atualizarResumoMapa();
+
+}
+
+
+// ----------------------------------------------------------------------
+// NAVEGAÇÃO POR ABAS (Lista / Mapa / Ocorrências) + SWIPE
+// ----------------------------------------------------------------------
+
+const painéis = ['painelLista','painelMapa','painelOcorrencias'];
+const botõesAba = ['btnAbaLista','btnAbaMapa','btnAbaOcorrencias'];
+
+function irParaAba(indice){
+
+if(indice < 0) indice = 0;
+if(indice > 2) indice = 2;
+
+abaAtual = indice;
+
+painéis.forEach((idPainel, i)=>{
+document.getElementById(idPainel).classList.toggle('ativo', i === indice);
+});
+
+botõesAba.forEach((idBtn, i)=>{
+document.getElementById(idBtn).classList.toggle('ativa', i === indice);
+});
+
+// Ao entrar na aba do mapa, garante que ele já existe e recalcula o
+// tamanho (necessário porque ele estava com display:none)
+if(indice === 1){
+inicializarMapaSeNecessario();
+iniciarRastreamentoLocalizacao();
+setTimeout(()=>{
+mapa.invalidateSize();
+atualizarMapa();
+}, 100);
+}
+
+}
+
+// ----------------------------------------------------------------------
+// INICIALIZAÇÃO
+// ----------------------------------------------------------------------
+
+carregarStorage();
+
+</script>
+
+</body>
+
+</html>
+color:white;
+padding:22px 20px 26px 20px;
+text-align:left;
+box-shadow:0 4px 16px rgba(255,106,0,.25);
+position:relative;
+overflow:hidden;
+}
+
+header .marca{
+display:flex;
+align-items:center;
+gap:10px;
+font-family:'Poppins',sans-serif;
+font-size:22px;
+font-weight:700;
+letter-spacing:-.3px;
+position:relative;
+z-index:1;
+}
+
+header .selo{
+width:38px;
+height:38px;
+background:rgba(255,255,255,.22);
+border-radius:11px;
+display:flex;
+align-items:center;
+justify-content:center;
+font-size:20px;
+flex-shrink:0;
+}
+
+header .subtitulo{
+margin-top:4px;
+font-size:12.5px;
+font-weight:500;
+color:rgba(255,255,255,.85);
+position:relative;
+z-index:1;
+}
+
+header::after{
+content:"";
+position:absolute;
+right:-30px;
+top:-40px;
+width:150px;
+height:150px;
+border-radius:50%;
+background:rgba(255,255,255,.08);
+}
+
+.container{
+padding:15px;
+}
+
+.card{
+background:white;
+padding:18px;
+border-radius:18px;
+margin-bottom:15px;
+box-shadow:0 4px 18px rgba(20,20,20,.06);
+}
+
+.card h2{
+font-size:16px;
+margin:0 0 4px 0;
+color:#222;
+}
+
+.stats{
+display:grid;
+grid-template-columns:1fr 1fr;
+gap:10px;
+margin-top:15px;
+}
+
+.stat{
+background:#fff3eb;
+padding:14px 12px;
+border-radius:14px;
+text-align:center;
+}
+
+.stat div:first-child{
+font-size:11.5px;
+color:#8a6a4f;
+font-weight:600;
+letter-spacing:.2px;
+}
+
+.stat h2{
+margin:4px 0 0 0;
+font-size:22px;
+color:#222;
+}
+
+.stat.entregue-cor{ background:#eef0f2; }
+.stat.entregue-cor div:first-child{ color:#5b6472; }
+.stat.pendente-cor{ background:#fff3eb; }
+.stat.ocorrencia-cor{ background:#fdeaea; }
+.stat.ocorrencia-cor div:first-child{ color:#a34747; }
+
+.barra-progresso{
+margin-top:16px;
+background:#ececec;
+border-radius:20px;
+overflow:hidden;
+height:20px;
+box-shadow:inset 0 1px 3px rgba(0,0,0,.08);
+}
+
+.barra-progresso-fill{
+height:100%;
+background:linear-gradient(90deg,#34d399,#22c55e);
+width:0%;
+transition:width .4s ease;
+text-align:center;
+font-size:11px;
+font-weight:600;
+color:white;
+line-height:20px;
+white-space:nowrap;
+}
+
+input[type=file]{
+width:100%;
+margin-top:10px;
+font-size:14px;
+color:#555;
+}
+
+button{
+width:100%;
+padding:14px;
+border:none;
+border-radius:12px;
+font-size:15.5px;
+font-weight:600;
+margin-top:10px;
+cursor:pointer;
+transition:transform .1s ease, filter .15s ease;
+font-family:inherit;
+}
+
+button:active{
+transform:scale(.97);
+filter:brightness(.95);
+}
+
+.importar{
+background:linear-gradient(135deg,#ff8a3d,#ff6a00);
+color:white;
+box-shadow:0 4px 12px rgba(255,106,0,.3);
+}
+
+.waze{
+background:#00b7ff;
+color:white;
+box-shadow:0 4px 12px rgba(0,183,255,.25);
+}
+
+.toggle{
+background:#f0f0f0;
+color:#444;
+box-shadow:none;
+}
+
+.abas{
+display:flex;
+background:white;
+position:sticky;
+top:0;
+z-index:500;
+box-shadow:0 2px 6px rgba(0,0,0,.08);
+}
+
+.aba-btn{
+flex:1;
+margin:0;
+padding:14px 6px;
+border:none;
+border-right:1px solid rgba(255,106,0,.25);
+border-radius:0;
+background:white;
+color:#8a8a8a;
+font-size:13px;
+font-weight:600;
+font-family:inherit;
+border-bottom:3px solid transparent;
+cursor:pointer;
+transition:background .15s ease,color .15s ease;
+}
+
+.aba-btn:last-child{
+border-right:none;
+}
+
+.aba-btn.ativa{
+color:#ff6a00;
+background:#fff6ef;
+border-bottom:3px solid #ff6a00;
+}
+
+.aba-btn.ocorrencias-aba.ativa{
+color:#e74c3c;
+background:#fdeeee;
+border-bottom-color:#e74c3c;
+}
+
+.painel-aba{
+display:none;
+}
+
+.painel-aba.ativo{
+display:block;
+}
+
+#painelMapa{
+position:relative;
+overflow:hidden;
+}
+
+#mapa{
+height:calc(100vh - 130px);
+border-radius:0;
+margin-top:0;
+}
+
+.aviso-vazio{
+text-align:center;
+color:#999;
+padding:30px 10px;
+}
+
+.divisoria-entregues{
+display:flex;
+align-items:center;
+text-align:center;
+color:#2ecc71;
+font-weight:bold;
+font-size:13px;
+margin:20px 0 10px 0;
+}
+
+.divisoria-entregues::before,
+.divisoria-entregues::after{
+content:"";
+flex:1;
+height:1px;
+background:#cdeedc;
+}
+
+.divisoria-entregues span{
+padding:0 10px;
+}
+
+.pin-usuario{
+width:18px;
+height:18px;
+background:#2563eb;
+border:3px solid white;
+border-radius:50%;
+box-shadow:0 0 0 4px rgba(37,99,235,.35);
+animation:pulsoUsuario 2s infinite;
+}
+
+@keyframes pulsoUsuario{
+0%{ box-shadow:0 0 0 4px rgba(37,99,235,.35); }
+70%{ box-shadow:0 0 0 12px rgba(37,99,235,0); }
+100%{ box-shadow:0 0 0 4px rgba(37,99,235,0); }
+}
+
+/* Pin estilo "etiqueta" (Mercado Livre) */
+.pin-mapa{
+position:relative;
+width:34px;
+height:46px;
+}
+
+.pin-corpo{
+width:32px;
+height:32px;
+border-radius:50%;
+background:currentColor;
+border:3px solid white;
+box-shadow:0 2px 6px rgba(0,0,0,.45);
+display:flex;
+align-items:center;
+justify-content:center;
+}
+
+.pin-corpo span{
+color:white;
+font-size:12.5px;
+font-weight:700;
+}
+
+.pin-mapa::after{
+content:"";
+position:absolute;
+left:50%;
+top:28px;
+transform:translateX(-50%);
+width:0;
+height:0;
+border-left:7px solid transparent;
+border-right:7px solid transparent;
+border-top:14px solid currentColor;
+filter:drop-shadow(0 2px 2px rgba(0,0,0,.25));
+}
+
+/* Parada selecionada no mapa: fica maior e com um anel de destaque,
+sempre acima dos demais pins */
+.pin-mapa.marcador-selecionado{
+transform:scale(1.3);
+transform-origin:bottom center;
+z-index:1000;
+animation:aparecerSelecionado .2s ease;
+}
+
+.pin-mapa.marcador-selecionado .pin-corpo{
+box-shadow:0 0 0 5px rgba(255,106,0,.35), 0 4px 10px rgba(0,0,0,.5);
+border-color:#fff6ef;
+}
+
+@keyframes aparecerSelecionado{
+0%{ transform:scale(1) translateY(0); }
+50%{ transform:scale(1.4) translateY(-4px); }
+100%{ transform:scale(1.3) translateY(0); }
+}
+
+/* Barra de resumo flutuante sobre o mapa */
+#resumoMapa{
+position:absolute;
+top:12px;
+left:12px;
+right:12px;
+background:white;
+border-radius:12px;
+padding:12px 16px;
+box-shadow:0 2px 10px rgba(0,0,0,.15);
+font-weight:bold;
+color:#333;
+font-size:14px;
+z-index:400;
+}
+
+#botaoCentralizar{
+position:absolute;
+top:70px;
+right:12px;
+width:44px;
+height:44px;
+padding:0;
+margin:0;
+border-radius:50%;
+background:white;
+box-shadow:0 2px 8px rgba(0,0,0,.2);
+font-size:20px;
+z-index:400;
+}
+
+/* Fundo escurecido atrás do painel inferior */
+#fundoInfoMapa{
+display:none;
+position:absolute;
+top:0;left:0;right:0;bottom:0;
+background:rgba(0,0,0,.35);
+z-index:600;
+}
+
+#fundoInfoMapa.aberto{
+display:block;
+}
+
+/* Painel inferior (bottom sheet) com os dados da parada, estilo Mercado Livre */
+#painelInfoMapa{
+position:absolute;
+left:0;
+right:0;
+bottom:0;
+background:white;
+border-radius:18px 18px 0 0;
+box-shadow:0 -4px 16px rgba(0,0,0,.25);
+padding:10px 18px 18px 18px;
+transform:translateY(100%);
+transition:transform .25s ease;
+z-index:601;
+max-height:65%;
+overflow-y:auto;
+}
+
+#painelInfoMapa.aberto{
+transform:translateY(0);
+}
+
+.alca-painel{
+width:40px;
+height:5px;
+background:#ddd;
+border-radius:10px;
+margin:0 auto 12px auto;
+}
+
+.btn-linha{
+display:flex;
+gap:8px;
+margin-top:10px;
+}
+
+.btn-linha button{
+margin-top:0;
+padding:12px 6px;
+font-size:13px;
+}
+
+.entregue-btn{ background:#2ecc71; color:white; }
+.ocorrencia-btn{ background:#e74c3c; color:white; }
+.desfazer-btn{ background:#ccc; color:#333; }
+
+.grupo{
+background:white;
+padding:16px;
+border-radius:16px;
+margin-bottom:12px;
+box-shadow:0 3px 12px rgba(20,20,20,.06);
+border-left:5px solid #ff6a00;
+transition:opacity .2s ease, box-shadow .2s ease;
+}
+
+.grupo h3{
+margin:0;
+font-size:15.5px;
+color:#222;
+}
+
+.grupo.status-entregue{
+border-left-color:#9ca3af;
+opacity:.65;
+box-shadow:none;
+}
+
+.grupo.status-ocorrencia{
+border-left-color:#e74c3c;
+}
+
+/* Parada composta: um só cabeçalho, várias localizações dentro
+(ex: Parada 5 com casa 43, casa 45, casa 1 - mesma família/parada) */
+.parada-composta{
+background:white;
+padding:16px;
+border-radius:16px;
+margin-bottom:12px;
+box-shadow:0 3px 12px rgba(20,20,20,.06);
+}
+
+.parada-composta > h3{
+margin:0;
+font-size:15.5px;
+color:#222;
+}
+
+.badge-total-parada{
+display:inline-block;
+margin-top:8px;
+padding:6px 12px;
+border-radius:8px;
+background:#ffe4cc;
+color:#a34c00;
+font-weight:700;
+font-size:13.5px;
+}
+
+.sub-local{
+border-left:4px solid #ff6a00;
+padding:10px 0 8px 12px;
+margin-top:12px;
+}
+
+.sub-local.status-entregue{
+border-left-color:#9ca3af;
+opacity:.65;
+}
+
+.sub-local.status-ocorrencia{
+border-left-color:#e74c3c;
+}
+
+.endereco{
+margin-top:6px;
+font-size:14.5px;
+line-height:1.4;
+color:#444;
+}
+
+.nome-destinatario{
+margin-top:6px;
+font-size:14px;
+font-weight:600;
+color:#333;
+}
+
+.destaque-temporario{
+box-shadow:0 0 0 3px #ff6a00, 0 6px 16px rgba(0,0,0,.18) !important;
+}
+
+.toast-copiloto{
+position:fixed;
+left:50%;
+bottom:26px;
+transform:translateX(-50%) translateY(20px);
+background:#222;
+color:white;
+padding:12px 20px;
+border-radius:30px;
+font-size:14px;
+font-weight:600;
+box-shadow:0 6px 20px rgba(0,0,0,.3);
+z-index:2000;
+opacity:0;
+pointer-events:none;
+transition:opacity .25s ease, transform .25s ease;
+}
+
+.toast-copiloto.aparecer{
+opacity:1;
+transform:translateX(-50%) translateY(0);
+}
+
+.toast-copiloto.toast-sucesso{ background:#1f7a3d; }
+.toast-copiloto.toast-alerta{ background:#c0392b; }
+.toast-copiloto.toast-neutro{ background:#333; }
+
+.badge{
+display:inline-block;
+margin-top:10px;
+padding:6px 11px;
+border-radius:8px;
+background:#fff3cd;
+font-weight:600;
+font-size:13px;
+color:#7a5b00;
+}
+
+.badge-status{
+display:inline-block;
+margin-top:10px;
+margin-left:6px;
+padding:6px 10px;
+border-radius:8px;
+font-weight:bold;
+font-size:13px;
+}
+
+.badge-status.pendente{ background:#fff3cd; color:#7a5b00; }
+.badge-status.entregue{ background:#e5e7eb; color:#374151; }
+.badge-status.ocorrencia{ background:#fbdada; color:#8c1c1c; }
+.badge-status.misto{ background:#ffe8d1; color:#a34c00; font-size:12px; }
+
+.pacote-status-entregue{ opacity:.6; }
+.pacote-status-ocorrencia{ background:#fff5f5; border-radius:8px; padding:8px !important; margin:4px 0; }
+
+.entregue-pacote-texto{
+margin-top:6px;
+font-size:12.5px;
+font-weight:700;
+color:#1f7a3d;
+}
+
+.ocorrencia-pacote-texto{
+margin-top:6px;
+font-size:12.5px;
+font-weight:700;
+color:#8c1c1c;
+}
+
+.ocorrencia-pacote-btn{
+width:auto;
+margin-top:8px;
+padding:6px 10px;
+font-size:12px;
+font-weight:600;
+background:#fdeaea;
+color:#c0392b;
+border-radius:8px;
+}
+
+.desfazer-pacote-btn{
+width:auto;
+margin-top:6px;
+padding:6px 10px;
+font-size:12px;
+font-weight:600;
+background:#eee;
+color:#555;
+border-radius:8px;
+}
+
+.motivo-texto{
+font-size:13px;
+color:#8c1c1c;
+margin-top:6px;
+font-style:italic;
+}
+
+.pacotes{
+display:none;
+margin-top:10px;
+}
+
+.pacote{
+padding:10px;
+border-top:1px solid #eee;
+}
+
+.codigo{
+font-weight:bold;
+word-break:break-word;
+}
+
+.detalhe{
+font-size:14px;
+color:#555;
+margin-top:4px;
+}
+
+.nome-cliente-pacote{
+font-size:13.5px;
+font-weight:600;
+color:#333;
+margin-top:3px;
+}
+
+.leaflet-popup-content{
+font-family:Arial,sans-serif;
+}
+
+.popup-titulo{
+font-weight:bold;
+margin-bottom:4px;
+}
+
+.popup-btn{
+display:inline-block;
+padding:5px 8px;
+border-radius:6px;
+font-size:12px;
+font-weight:bold;
+color:white;
+border:none;
+margin-top:4px;
+margin-right:4px;
+cursor:pointer;
+}
+
+/* Modal de motivo da ocorrência */
+.modal-fundo{
+display:none;
+position:fixed;
+top:0;left:0;right:0;bottom:0;
+background:rgba(0,0,0,.5);
+z-index:1000;
+align-items:flex-end;
+justify-content:center;
+}
+
+.modal-fundo.aberto{
+display:flex;
+}
+
+.modal-caixa{
+background:white;
+width:100%;
+max-width:480px;
+border-radius:16px 16px 0 0;
+padding:18px;
+}
+
+.modal-caixa h3{
+margin-top:0;
+}
+
+.motivo-opcao{
+width:100%;
+text-align:left;
+background:#f4f4f4;
+color:#333;
+margin-top:8px;
+padding:12px;
+border-radius:10px;
+}
+
+.motivo-opcao:active{
+background:#ffe0cc;
+}
+
+.cancelar-modal{
+background:#eee;
+color:#555;
+margin-top:14px;
+}
+
+</style>
+
+</head>
+
+<body translate="no">
+
+<header>
+<div class="marca">
+<span class="selo">🚚</span>
+<span>Copiloto Entregas</span>
+</div>
+<div class="subtitulo">Sua rota, organizada do seu jeito</div>
+</header>
+
+<div class="abas">
+<button class="aba-btn ativa" id="btnAbaLista" onclick="irParaAba(0)">📋 Lista (<span id="contadorLista">0</span>)</button>
+<button class="aba-btn" id="btnAbaMapa" onclick="irParaAba(1)">🗺️ Mapa</button>
+<button class="aba-btn ocorrencias-aba" id="btnAbaOcorrencias" onclick="irParaAba(2)">⚠️ Ocorrências (<span id="contadorOcorrencias">0</span>)</button>
+</div>
+
+<div id="areaAbas">
+
+<div class="painel-aba ativo" id="painelLista">
+
+<div class="container">
+
+<div class="card">
+
+<h2>Importar Rota Shopee</h2>
+
+<input
+type="file"
+id="arquivo"
+accept=".xlsx,.xls">
+
+<button
+class="importar"
+onclick="importarExcel()">
+Importar Rota
+</button>
+
+<div class="stats">
+
+<div class="stat">
+<div>Pacotes</div>
+<h2 id="pacotes">0</h2>
+</div>
+
+<div class="stat">
+<div>Paradas</div>
+<h2 id="locais">0</h2>
+</div>
+
+<div class="stat pendente-cor">
+<div>Pendentes</div>
+<h2 id="qtdPendentes">0</h2>
+</div>
+
+<div class="stat entregue-cor">
+<div>Entregues</div>
+<h2 id="qtdEntregues">0</h2>
+</div>
+
+<div class="stat ocorrencia-cor" style="grid-column:1 / span 2;">
+<div>Ocorrências</div>
+<h2 id="qtdOcorrencias">0</h2>
+</div>
+
+</div>
+
+<div class="barra-progresso">
+<div class="barra-progresso-fill" id="barraProgresso">0%</div>
+</div>
+
+</div>
+
+<div id="lista"></div>
+
+</div>
+
+</div>
+
+<div class="painel-aba" id="painelMapa">
+<div id="mapa"></div>
+
+<div id="resumoMapa">
+<span id="resumoMapaTexto">0 pendentes</span>
+</div>
+
+<button id="botaoCentralizar" onclick="centralizarMinhaLocalizacao()" title="Centralizar na minha localização e voltar ao norte">🎯</button>
+
+<div id="fundoInfoMapa" onclick="fecharInfoMapa()"></div>
+<div id="painelInfoMapa">
+<div class="alca-painel"></div>
+<div id="conteudoInfoMapa"></div>
+</div>
+
+</div>
+
+<div class="painel-aba" id="painelOcorrencias">
+<div class="container">
+<div id="listaOcorrencias"></div>
+</div>
+</div>
+
+</div>
+
+<!-- Modal para selecionar o motivo da ocorrência -->
+<div class="modal-fundo" id="modalMotivo">
+<div class="modal-caixa">
+<h3>Motivo da ocorrência</h3>
+<button class="motivo-opcao" onclick="confirmarOcorrencia('Cliente ausente')">Cliente ausente</button>
+<button class="motivo-opcao" onclick="confirmarOcorrencia('Comércio fechado')">Comércio fechado</button>
+<button class="motivo-opcao" onclick="confirmarOcorrencia('Endereço não localizado')">Endereço não localizado</button>
+<button class="motivo-opcao" onclick="confirmarOcorrencia('Recusado')">Recusado</button>
+<button class="motivo-opcao" onclick="confirmarOcorrencia('Problema de acesso')">Problema de acesso</button>
+<button class="motivo-opcao" onclick="confirmarOcorrencia('Outro')">Outro</button>
+<button class="cancelar-modal" onclick="fecharModalMotivo()">Cancelar</button>
+</div>
+</div>
+
+<script>
+
+// ======================================================================
+// ESTADO GLOBAL
+// grupos: array de paradas. Cada parada:
+// { id, stop, endereco, lat, lng, pacotes:[{codigo,endereco,stop}],
+//   status: 'pendente' | 'entregue' | 'ocorrencia', motivo: string|null }
+// ======================================================================
+
+let grupos = [];
+let mapa = null;
+let marcadores = {};
+let meuMarcador = null;
+let idRastreamento = null;
+// (alvoAguardandoMotivo é declarado mais abaixo, junto da lógica de status)
+let abaAtual = 0; // 0 = Lista, 1 = Mapa, 2 = Ocorrências
+let mapaFoiEnquadrado = false; // controla se já demos fitBounds (evita resetar o zoom)
+const CHAVE_STORAGE = "copiloto_entregas_rota_atual";
+
+// ----------------------------------------------------------------------
+// IMPORTAÇÃO DA PLANILHA
+// ----------------------------------------------------------------------
+
+function importarExcel(){
+
+const arquivo =
+document.getElementById("arquivo").files[0];
+
+
+if(!arquivo){
+
+alert("Selecione a planilha");
+return;
+
+}
+
+const reader = new FileReader();
+
+reader.onload = function(e){
+
+const data =
+new Uint8Array(e.target.result);
+
+const workbook =
+XLSX.read(data,{type:'array'});
+
+const sheet =
+workbook.Sheets[
+workbook.SheetNames[0]
+];
+
+const json =
+XLSX.utils.sheet_to_json(sheet);
+
+processarEntregas(json);
+
+};
+reader.readAsArrayBuffer(arquivo);
+
+}
+
+function processarEntregas(dados){
+
+// Nova planilha = nova rota (zera tudo, inclusive o que estava salvo)
+const baldes = {}; // agrupados primeiro por número de Parada (ou "EXTRA")
+
+document.getElementById("pacotes").innerText =
+dados.length;
+
+dados.forEach(item=>{
+
+const endereco =
+item["Destination Address"] ||
+item["Address"] ||
+"-";
+
+const codigo =
+item["SPX TN"] ||
+item["SPX_TN"] ||
+"-";
+
+const destinatario =
+item["Recipient"] ||
+item["Recipient Name"] ||
+item["Consignee"] ||
+item["Consignee Name"] ||
+item["Nome"] ||
+item["Nome do Destinatário"] ||
+item["Customer Name"] ||
+item["Buyer Name"] ||
+"";
+
+const lat =
+item["Latitude"] ||
+"";
+
+const lng =
+item["Longitude"] ||
+"";
+
+const stopOriginal =
+item["Stop"] ||
+item["stop"] ||
+"";
+
+const stopTexto = String(stopOriginal).trim();
+
+const paradaBase = stopTexto
+.replace(/[A-Za-z]$/,"")
+.trim();
+
+// Balde inicial: mesmo número de Parada já é um forte indício de ser o
+// mesmo local. Dentro do balde, decide-se se é "o mesmo lugar de fato"
+// pela função paradasMesmoLocal (unidade/apto -> depois distância real).
+const chaveBalde = stopTexto ? ("STOP|" + paradaBase) : "EXTRA";
+
+if(!baldes[chaveBalde]) baldes[chaveBalde] = [];
+
+const candidato = { endereco:endereco, lat:lat, lng:lng };
+
+let cluster = baldes[chaveBalde].find(c => paradasMesmoLocal(c.representante, candidato));
+
+if(!cluster){
+
+cluster = {
+representante: candidato,
+grupo: {
+id: chaveBalde + "#" + (baldes[chaveBalde].length + 1),
+endereco:endereco,
+lat:lat,
+lng:lng,
+stop:paradaBase,
+destinatario:destinatario,
+pacotes:[]
+// status não fica mais aqui - é calculado por pacote (ver statusEfetivoGrupo)
+}
+};
+
+baldes[chaveBalde].push(cluster);
+
+}
+
+if(!cluster.grupo.destinatario && destinatario){
+cluster.grupo.destinatario = destinatario;
+}
+
+cluster.grupo.pacotes.push({
+
+codigo:codigo,
+endereco:endereco,
+stop:stopTexto,
+destinatario:destinatario,
+status:'pendente',
+motivo:null
+
+});
+
+});
+
+grupos = [];
+Object.values(baldes).forEach(lista => lista.forEach(c => grupos.push(c.grupo)));
+
+mapaFoiEnquadrado = false; // nova rota -> próximo enquadramento do mapa deve se ajustar às novas paradas
+
+salvarStorage();
+renderizarTudo();
+
+}
+
+// ----------------------------------------------------------------------
+// LÓGICA DE "É O MESMO LOCAL?" (usada no agrupamento da importação)
+// ----------------------------------------------------------------------
+
+// Remove acentos, baixa a caixa e limpa espaços - facilita comparar texto
+function normalizarTexto(texto){
+return String(texto || "")
+.normalize("NFD")
+.replace(/[\u0300-\u036f]/g, "")
+.toLowerCase()
+.replace(/\s+/g, " ")
+.trim();
+}
+
+// Procura menções de apartamento/unidade/bloco/casa no endereço e monta
+// uma "assinatura" com os números encontrados. Ex: "Bloco B apto 607"
+// e "907 Bloco B" tem assinaturas diferentes -> são unidades diferentes.
+function assinaturaUnidade(enderecoNormalizado){
+const regex = /\b(?:apto|ap|apartamento|unidade|un|casa|bloco|bl|sala|loja|lote|quadra|qd)\.?\s*([a-z0-9\-]+)/gi;
+const encontrados = [];
+let m;
+while((m = regex.exec(enderecoNormalizado)) !== null){
+encontrados.push(m[1]);
+}
+if(encontrados.length === 0) return null;
+return encontrados.sort().join("|");
+}
+
 // Pega o nome da rua (texto antes da primeira vírgula) e normaliza
 // abreviações comuns, pra "R." e "Rua" contarem como igual.
 function nomeRua(enderecoNormalizado){
