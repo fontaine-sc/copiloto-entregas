@@ -430,12 +430,25 @@ border-radius:50%;
 display:inline-block;
 }
 
-.busca-mapa{
-display:flex;
+#painelBuscaMapa{
+display:none;
+position:absolute;
+top:90px;
+right:64px;
+left:12px;
+background:white;
+border-radius:12px;
+padding:8px;
+box-shadow:0 4px 14px rgba(0,0,0,.25);
+z-index:399;
 gap:6px;
 }
 
-.busca-mapa input{
+#painelBuscaMapa.aberto{
+display:flex;
+}
+
+#painelBuscaMapa input{
 flex:1;
 border:1px solid #e5e5e5;
 border-radius:8px;
@@ -444,7 +457,7 @@ font-size:13px;
 font-family:inherit;
 }
 
-.busca-mapa button{
+#painelBuscaMapa button{
 width:auto;
 margin:0;
 padding:7px 12px;
@@ -474,7 +487,7 @@ background:#ffe4cc;
 
 #botaoCentralizar{
 position:absolute;
-top:158px;
+top:202px;
 right:12px;
 width:44px;
 height:44px;
@@ -941,14 +954,16 @@ Importar Rota
 <span><i class="ponto-legenda" style="background:#e74c3c"></i> Ocorrência</span>
 </div>
 
-<div class="busca-mapa">
+</div>
+
+<div id="painelBuscaMapa">
 <input type="text" id="buscaParadaMapa" placeholder="Buscar parada nº..." inputmode="numeric" onkeydown="if(event.key==='Enter') buscarParadaNoMapa()">
 <button onclick="buscarParadaNoMapa()">🔍</button>
 </div>
 
-</div>
+<button id="botaoBuscaMapa" class="botao-flutuante-mapa" style="top:90px;" onclick="alternarBuscaMapa()" title="Buscar parada">🔍</button>
 
-<button id="botaoOcultarEntregues" class="botao-flutuante-mapa" style="top:102px;" onclick="alternarOcultarEntreguesMapa()" title="Ocultar/mostrar entregues">👁️</button>
+<button id="botaoOcultarEntregues" class="botao-flutuante-mapa" style="top:146px;" onclick="alternarOcultarEntreguesMapa()" title="Ocultar/mostrar entregues">👁️</button>
 
 <button id="botaoCentralizar" onclick="centralizarMinhaLocalizacao()" title="Centralizar na minha localização e voltar ao norte">🎯</button>
 
@@ -2149,8 +2164,11 @@ mapa = L.map('mapa', {
 rotate: true,        // habilita a rotação do mapa
 touchRotate: true,    // gira com o gesto de dois dedos no celular
 rotateControl: false, // vamos usar nosso próprio botão de bússola
+zoomControl: false,   // desliga o padrão (fica em cima da legenda) - recriamos embaixo
 bearing: 0
 }).setView([-23.5505,-46.6333], 12);
+
+L.control.zoom({ position: 'bottomleft' }).addTo(mapa);
 
 L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
 maxZoom: 19,
@@ -2380,6 +2398,17 @@ atualizarMapa();
 }
 
 // Busca uma parada pelo número e leva o mapa até ela, destacando o pin
+// Abre/fecha o campo de busca (fica escondido por padrão pra não
+// atrapalhar a visualização do mapa)
+function alternarBuscaMapa(){
+const painel = document.getElementById('painelBuscaMapa');
+const abrindo = !painel.classList.contains('aberto');
+painel.classList.toggle('aberto', abrindo);
+if(abrindo){
+setTimeout(()=> document.getElementById('buscaParadaMapa').focus(), 100);
+}
+}
+
 function buscarParadaNoMapa(){
 
 const valor = document.getElementById('buscaParadaMapa').value.trim();
@@ -2404,6 +2433,7 @@ mapa.setView([lat, lng], Math.max(mapa.getZoom(), 17));
 destacarMarcador(grupo.id);
 document.getElementById('buscaParadaMapa').value = '';
 document.getElementById('buscaParadaMapa').blur();
+document.getElementById('painelBuscaMapa').classList.remove('aberto');
 
 }
 
