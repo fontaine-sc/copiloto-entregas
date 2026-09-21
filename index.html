@@ -622,9 +622,24 @@ color:#c0392b;
 border-radius:8px;
 }
 
+.btn-linha-pacote{
+display:flex;
+gap:6px;
+margin-top:6px;
+}
+
+.entregue-pacote-btn{
+width:auto;
+padding:6px 10px;
+font-size:12px;
+font-weight:600;
+background:#e5f7ea;
+color:#1f7a3d;
+border-radius:8px;
+}
+
 .desfazer-pacote-btn{
 width:auto;
-margin-top:6px;
 padding:6px 10px;
 font-size:12px;
 font-weight:600;
@@ -748,7 +763,7 @@ margin-top:14px;
 <span class="selo">🚚</span>
 <span>Copiloto Entregas</span>
 </div>
-<div class="subtitulo">Sua rota, organizada do seu jeito</div>
+<div class="subtitulo" id="saudacaoHeader">Sua rota, organizada do seu jeito</div>
 </header>
 
 <div class="abas">
@@ -875,6 +890,7 @@ let idRastreamento = null;
 // (alvoAguardandoMotivo é declarado mais abaixo, junto da lógica de status)
 let abaAtual = 0; // 0 = Lista, 1 = Mapa, 2 = Ocorrências
 let mapaFoiEnquadrado = false; // controla se já demos fitBounds (evita resetar o zoom)
+let celebracaoMostrada = false; // evita repetir a comemoração de rota 100% toda hora
 const CHAVE_STORAGE = "copiloto_entregas_rota_atual";
 
 // ----------------------------------------------------------------------
@@ -1040,6 +1056,7 @@ grupos = [];
 Object.values(baldes).forEach(lista => lista.forEach(c => grupos.push(c.grupo)));
 
 mapaFoiEnquadrado = false; // nova rota -> próximo enquadramento do mapa deve se ajustar às novas paradas
+celebracaoMostrada = false; // nova rota -> pode comemorar de novo quando terminar essa
 
 salvarStorage();
 renderizarTudo();
@@ -1389,7 +1406,10 @@ let acaoPacoteHtml = "";
 if(pacote.status === 'ocorrencia'){
 acaoPacoteHtml = `
 <div class="ocorrencia-pacote-texto">⚠️ Ocorrência${pacote.motivo ? ': ' + pacote.motivo : ''}</div>
-<button class="desfazer-pacote-btn" onclick="desfazerStatusPacote('${grupo.id}', ${indice})">↩️ Desfazer este pacote</button>
+<div class="btn-linha-pacote">
+<button class="entregue-pacote-btn" onclick="marcarEntreguePacote('${grupo.id}', ${indice})">✅ Entregar</button>
+<button class="desfazer-pacote-btn" onclick="desfazerStatusPacote('${grupo.id}', ${indice})">↩️ Desfazer</button>
+</div>
 `;
 }else{
 acaoPacoteHtml = `
@@ -1574,7 +1594,10 @@ let acaoPacoteHtml = "";
 if(pacote.status === 'ocorrencia'){
 acaoPacoteHtml = `
 <div class="ocorrencia-pacote-texto">⚠️ Ocorrência${pacote.motivo ? ': ' + pacote.motivo : ''}</div>
-<button class="desfazer-pacote-btn" onclick="desfazerStatusPacote('${grupo.id}', ${indice})">↩️ Desfazer este pacote</button>
+<div class="btn-linha-pacote">
+<button class="entregue-pacote-btn" onclick="marcarEntreguePacote('${grupo.id}', ${indice})">✅ Entregar</button>
+<button class="desfazer-pacote-btn" onclick="desfazerStatusPacote('${grupo.id}', ${indice})">↩️ Desfazer</button>
+</div>
 `;
 }else{
 acaoPacoteHtml = `
@@ -1718,7 +1741,7 @@ p.status = 'entregue';
 });
 salvarStorage();
 renderizarTudo();
-mostrarToast('✅ Entrega confirmada', 'sucesso');
+mostrarToast(fraseAleatoria(FRASES_ENTREGA), 'sucesso');
 }
 
 // Alvo do modal de motivo: pode ser a parada inteira ({tipo:'grupo'}) ou
@@ -1756,14 +1779,14 @@ grupo.pacotes.forEach(p => {
 p.status = 'ocorrencia';
 p.motivo = motivo;
 });
-mostrarToast('⚠️ Ocorrência registrada', 'alerta');
+mostrarToast(fraseAleatoria(FRASES_OCORRENCIA), 'alerta');
 }else{
 // Exceção: só o pacote específico vira ocorrência
 const pacote = grupo.pacotes[alvoAguardandoMotivo.indice];
 if(pacote){
 pacote.status = 'ocorrencia';
 pacote.motivo = motivo;
-mostrarToast('⚠️ Ocorrência registrada nesse pacote', 'alerta');
+mostrarToast(fraseAleatoria(FRASES_OCORRENCIA), 'alerta');
 }
 }
 
@@ -1803,11 +1826,45 @@ renderizarTudo();
 mostrarToast('↩️ Pacote voltou a pendente', 'neutro');
 }
 
+// Resolve uma ocorrência marcando o pacote como entregue direto, sem
+// precisar desfazer primeiro (ex: você resolveu o problema na hora e
+// conseguiu entregar mesmo assim).
+function marcarEntreguePacote(grupoId, indice){
+const grupo = encontrarGrupo(grupoId);
+if(!grupo) return;
+const pacote = grupo.pacotes[indice];
+if(!pacote) return;
+pacote.status = 'entregue';
+pacote.motivo = null;
+salvarStorage();
+renderizarTudo();
+mostrarToast(fraseAleatoria(FRASES_ENTREGA), 'sucesso');
+}
+
 // ----------------------------------------------------------------------
 // TOAST DE CONFIRMAÇÃO (animação rápida ao marcar status)
 // ----------------------------------------------------------------------
 
 let idTimeoutToast = null;
+
+// Um pouco de personalidade nas mensagens - em vez de repetir sempre a
+// mesma frase, sorteia entre algumas variações.
+const FRASES_ENTREGA = [
+'✅ Entrega confirmada!',
+'🚚 Mandou bem, mais uma na conta!',
+'📦 Show, entregue!',
+'✅ Boa! Seguindo o baile.'
+];
+
+const FRASES_OCORRENCIA = [
+'⚠️ Ocorrência registrada',
+'⚠️ Anotado, bora pra próxima',
+'⚠️ Beleza, já ficou registrado'
+];
+
+function fraseAleatoria(lista){
+return lista[Math.floor(Math.random() * lista.length)];
+}
 
 function mostrarToast(mensagem, tipo){
 
@@ -1863,6 +1920,16 @@ const percentual = totalPacotes > 0
 const barra = document.getElementById('barraProgresso');
 barra.style.width = percentual + '%';
 barra.innerText = percentual + '%';
+
+// Uma comemoração quando a rota é 100% finalizada 🎉
+if(percentual === 100 && totalPacotes > 0){
+if(!celebracaoMostrada){
+celebracaoMostrada = true;
+mostrarToast('🎉 Rota finalizada! Mandou muito bem hoje.', 'sucesso');
+}
+}else{
+celebracaoMostrada = false;
+}
 
 }
 
@@ -2200,6 +2267,30 @@ atualizarMapa();
 }
 
 }
+
+// ----------------------------------------------------------------------
+// UM POUCO DE PERSONALIDADE 🚚
+// ----------------------------------------------------------------------
+
+function aplicarSaudacao(){
+
+const hora = new Date().getHours();
+let frases;
+
+if(hora >= 5 && hora < 12){
+frases = ["Bom dia! Vamos nessa 🚀", "Bom dia! Café tomado, rota na mão ☕"];
+}else if(hora >= 12 && hora < 18){
+frases = ["Boa tarde! Só mais um pouco 💪", "Boa tarde! Bora manter o ritmo 🔥"];
+}else{
+frases = ["Boa noite! Reta final 🌙", "Boa noite! Já deu pra hoje, quase lá 🌙"];
+}
+
+document.getElementById('saudacaoHeader').innerText =
+frases[Math.floor(Math.random() * frases.length)];
+
+}
+
+aplicarSaudacao();
 
 // ----------------------------------------------------------------------
 // INICIALIZAÇÃO
