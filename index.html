@@ -934,6 +934,22 @@ item["Destination Address"] ||
 item["Address"] ||
 "-";
 
+const bairro =
+item["Bairro"] ||
+item["Neighborhood"] ||
+"";
+
+const cidade =
+item["City"] ||
+item["Cidade"] ||
+"";
+
+const cep =
+item["Zipcode/Postal code"] ||
+item["Zipcode"] ||
+item["CEP"] ||
+"";
+
 const codigo =
 item["SPX TN"] ||
 item["SPX_TN"] ||
@@ -991,6 +1007,9 @@ lat:lat,
 lng:lng,
 stop:paradaBase,
 destinatario:destinatario,
+bairro:bairro,
+cidade:cidade,
+cep:cep,
 pacotes:[]
 // status não fica mais aqui - é calculado por pacote (ver statusEfetivoGrupo)
 }
@@ -1052,9 +1071,18 @@ function esperar(ms){
 return new Promise(resolver => setTimeout(resolver, ms));
 }
 
-async function geocodificarEndereco(endereco){
+// Monta uma consulta de endereço completa (rua, bairro, cidade, CEP)
+// para a geocodificação ser muito mais precisa do que só a rua sozinha
+// - evita confundir com uma rua de mesmo nome em outra cidade.
+function montarConsultaEndereco(grupo){
+const partes = [grupo.endereco, grupo.bairro, grupo.cidade, grupo.cep]
+.filter(p => p && String(p).trim() && String(p).trim() !== "-");
+return partes.join(", ");
+}
+
+async function geocodificarEndereco(consulta){
 try{
-const url = "https://nominatim.openstreetmap.org/search?format=json&limit=1&countrycodes=br&q=" + encodeURIComponent(endereco);
+const url = "https://nominatim.openstreetmap.org/search?format=json&limit=1&countrycodes=br&q=" + encodeURIComponent(consulta);
 const resposta = await fetch(url, { headers: { "Accept-Language": "pt-BR" } });
 if(!resposta.ok) return null;
 const dados = await resposta.json();
@@ -1062,7 +1090,7 @@ if(dados && dados.length > 0){
 return { lat: dados[0].lat, lng: dados[0].lon };
 }
 }catch(erro){
-console.warn("Falha ao buscar coordenada para:", endereco, erro);
+console.warn("Falha ao buscar coordenada para:", consulta, erro);
 }
 return null;
 }
@@ -1079,7 +1107,7 @@ let corrigidas = 0;
 
 for(const grupo of candidatos){
 
-const resultado = await geocodificarEndereco(grupo.endereco);
+const resultado = await geocodificarEndereco(montarConsultaEndereco(grupo));
 
 if(resultado){
 grupo.lat = resultado.lat;
@@ -1113,17 +1141,20 @@ if(!grupo) return;
 fecharInfoMapa();
 mostrarToast('🔍 Verificando localização...', 'neutro');
 
-const resultado = await geocodificarEndereco(grupo.endereco);
+const resultado = await geocodificarEndereco(montarConsultaEndereco(grupo));
 
 if(!resultado){
-mostrarToast('⚠️ Não foi possível verificar esse endereço', 'alerta');
+mostrarToast('⚠️ Não foi possível verificar - endereço não encontrado', 'alerta');
 return;
 }
 
 const latAntiga = parseFloat(grupo.lat);
 const lngAntiga = parseFloat(grupo.lng);
+const latNova = parseFloat(resultado.lat);
+const lngNova = parseFloat(resultado.lng);
+
 const distanciaMudanca = (!isNaN(latAntiga) && !isNaN(lngAntiga))
-? distanciaMetros(latAntiga, lngAntiga, parseFloat(resultado.lat), parseFloat(resultado.lng))
+? distanciaMetros(latAntiga, lngAntiga, latNova, lngNova)
 : null;
 
 grupo.lat = resultado.lat;
@@ -1131,10 +1162,14 @@ grupo.lng = resultado.lng;
 salvarStorage();
 renderizarTudo();
 
+// Leva o mapa até onde o pin ficou, pra você ver na hora pra onde ele foi
+mapa.setView([latNova, lngNova], Math.max(mapa.getZoom(), 17));
+setTimeout(()=> destacarMarcador(grupo.id), 150);
+
 if(distanciaMudanca !== null && distanciaMudanca < 15){
-mostrarToast('✅ Localização já estava correta', 'sucesso');
+mostrarToast('✅ Já estava correto - nada mudou', 'sucesso');
 }else{
-mostrarToast('✅ Localização corrigida no mapa', 'sucesso');
+mostrarToast('✅ Pin corrigido - mapa levado até a nova posição', 'sucesso');
 }
 
 }
