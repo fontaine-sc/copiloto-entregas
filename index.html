@@ -1187,6 +1187,7 @@ mapaFoiEnquadrado = false; // nova rota -> próximo enquadramento do mapa deve s
 celebracaoMostrada = false; // nova rota -> pode comemorar de novo quando terminar essa
 marcosMostrados = new Set(); // nova rota -> pode avisar os marcos de progresso de novo
 recordeAvisado = false; // nova rota -> pode avisar recorde de novo
+painelPacotesAbertos = new Set(); // nova rota -> nenhum painel deve começar aberto
 
 salvarStorage();
 renderizarTudo();
@@ -1591,7 +1592,8 @@ Mostrar/Ocultar pacotes
 
 <div
 id="pacotes_${grupo.id}"
-class="pacotes">
+class="pacotes"
+style="${painelPacotesAbertos.has(grupo.id) ? 'display:block;' : ''}">
 
 ${htmlPacotes}
 
@@ -1754,7 +1756,7 @@ container.innerHTML += `
 ${badgeStatusGrupoHtml(grupo)}
 
 <button class="toggle" onclick="alternarPacotes('oc_${grupo.id}')">Mostrar/Ocultar pacotes</button>
-<div id="pacotes_oc_${grupo.id}" class="pacotes">${htmlPacotes}</div>
+<div id="pacotes_oc_${grupo.id}" class="pacotes" style="${painelPacotesAbertos.has('oc_' + grupo.id) ? 'display:block;' : ''}">${htmlPacotes}</div>
 
 <button class="waze" onclick="abrirWaze('${grupo.lat}','${grupo.lng}')">Abrir no Waze</button>
 
@@ -1784,10 +1786,14 @@ elemento.style.display ===
 elemento.style.display =
 "none";
 
+painelPacotesAbertos.delete(id);
+
 }else{
 
 elemento.style.display =
 "block";
+
+painelPacotesAbertos.add(id);
 
 }
 
@@ -2380,6 +2386,7 @@ setTimeout(()=> el.classList.remove('destaque-temporario'), 1600);
 }
 
 let ocultarEntreguesMapa = false;
+let painelPacotesAbertos = new Set(); // ids das listas de pacotes que o usuário deixou abertas
 
 function atualizarResumoMapa(){
 const todosPacotes = grupos.flatMap(g => g.pacotes);
