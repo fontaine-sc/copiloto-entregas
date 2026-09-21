@@ -86,6 +86,19 @@ border-radius:50%;
 background:rgba(255,255,255,.08);
 }
 
+.botao-som{
+position:absolute;
+top:16px;
+right:16px;
+width:auto;
+margin:0;
+padding:8px 10px;
+border-radius:10px;
+background:rgba(255,255,255,.2);
+font-size:16px;
+z-index:2;
+}
+
 .container{
 padding:15px;
 }
@@ -759,6 +772,7 @@ margin-top:14px;
 <body translate="no">
 
 <header>
+<button id="botaoSom" class="botao-som" onclick="alternarSom()" title="Ligar/desligar som">🔊</button>
 <div class="marca">
 <span class="selo">🚚</span>
 <span>Copiloto Entregas</span>
@@ -891,6 +905,10 @@ let idRastreamento = null;
 let abaAtual = 0; // 0 = Lista, 1 = Mapa, 2 = Ocorrências
 let mapaFoiEnquadrado = false; // controla se já demos fitBounds (evita resetar o zoom)
 let celebracaoMostrada = false; // evita repetir a comemoração de rota 100% toda hora
+let marcosMostrados = new Set(); // marcos de progresso (25/50/75%) já avisados nesta rota
+let recordeAvisado = false; // evita repetir o aviso de recorde do dia várias vezes
+const HISTORICO_STORAGE_KEY = "copiloto_entregas_historico";
+const SOM_STORAGE_KEY = "copiloto_entregas_som_ativado";
 const CHAVE_STORAGE = "copiloto_entregas_rota_atual";
 
 // ----------------------------------------------------------------------
@@ -1057,6 +1075,8 @@ Object.values(baldes).forEach(lista => lista.forEach(c => grupos.push(c.grupo)))
 
 mapaFoiEnquadrado = false; // nova rota -> próximo enquadramento do mapa deve se ajustar às novas paradas
 celebracaoMostrada = false; // nova rota -> pode comemorar de novo quando terminar essa
+marcosMostrados = new Set(); // nova rota -> pode avisar os marcos de progresso de novo
+recordeAvisado = false; // nova rota -> pode avisar recorde de novo
 
 salvarStorage();
 renderizarTudo();
@@ -1742,6 +1762,7 @@ p.status = 'entregue';
 salvarStorage();
 renderizarTudo();
 mostrarToast(fraseAleatoria(FRASES_ENTREGA), 'sucesso');
+tocarSomEntrega();
 }
 
 // Alvo do modal de motivo: pode ser a parada inteira ({tipo:'grupo'}) ou
@@ -1839,6 +1860,7 @@ pacote.motivo = null;
 salvarStorage();
 renderizarTudo();
 mostrarToast(fraseAleatoria(FRASES_ENTREGA), 'sucesso');
+tocarSomEntrega();
 }
 
 // ----------------------------------------------------------------------
@@ -1917,6 +1939,23 @@ const percentual = totalPacotes > 0
 ? Math.round((pacotesEntregues / totalPacotes) * 100)
 : 0;
 
+// Marcos de progresso da rota - avisa uma vez cada quando cruza 25/50/75%
+const MARCOS_PROGRESSO = [
+{ valor: 25, mensagem: '🚀 25% da rota! Bom começo.' },
+{ valor: 50, mensagem: '💪 Metade do caminho!' },
+{ valor: 75, mensagem: '🔥 75%! Reta final chegando.' }
+];
+
+MARCOS_PROGRESSO.forEach(marco => {
+if(percentual >= marco.valor && !marcosMostrados.has(marco.valor)){
+marcosMostrados.add(marco.valor);
+mostrarToast(marco.mensagem, 'sucesso');
+}
+});
+
+// Compara com o histórico salvo pra avisar quando bater o recorde do dia
+atualizarHistoricoEAvisarRecorde(pacotesEntregues);
+
 const barra = document.getElementById('barraProgresso');
 barra.style.width = percentual + '%';
 barra.innerText = percentual + '%';
@@ -1929,6 +1968,50 @@ mostrarToast('🎉 Rota finalizada! Mandou muito bem hoje.', 'sucesso');
 }
 }else{
 celebracaoMostrada = false;
+}
+
+}
+
+// Guarda, por dia, o maior número de pacotes entregues naquele dia -
+// e avisa (uma vez por rota) quando o dia de hoje supera o melhor dia
+// anterior já registrado.
+function dataDeHojeChave(){
+const d = new Date();
+return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0');
+}
+
+function carregarHistoricoEntregas(){
+try{
+const bruto = localStorage.getItem(HISTORICO_STORAGE_KEY);
+return bruto ? JSON.parse(bruto) : {};
+}catch(erro){
+return {};
+}
+}
+
+function salvarHistoricoEntregas(historico){
+try{
+localStorage.setItem(HISTORICO_STORAGE_KEY, JSON.stringify(historico));
+}catch(erro){
+console.warn("Não foi possível salvar o histórico de entregas:", erro);
+}
+}
+
+function atualizarHistoricoEAvisarRecorde(pacotesEntreguesHoje){
+
+const historico = carregarHistoricoEntregas();
+const hoje = dataDeHojeChave();
+
+const recordeAnterior = Object.keys(historico)
+.filter(dia => dia !== hoje)
+.reduce((max, dia) => Math.max(max, historico[dia] || 0), 0);
+
+historico[hoje] = Math.max(historico[hoje] || 0, pacotesEntreguesHoje);
+salvarHistoricoEntregas(historico);
+
+if(!recordeAvisado && recordeAnterior > 0 && pacotesEntreguesHoje > recordeAnterior){
+recordeAvisado = true;
+mostrarToast(`🏆 Novo recorde! Hoje já passou seu melhor dia (${recordeAnterior} → ${pacotesEntreguesHoje})`, 'sucesso');
 }
 
 }
@@ -2272,17 +2355,104 @@ atualizarMapa();
 // UM POUCO DE PERSONALIDADE 🚚
 // ----------------------------------------------------------------------
 
+// ----------------------------------------------------------------------
+// SOM DE CONFIRMAÇÃO (opcional, com botão pra silenciar)
+// ----------------------------------------------------------------------
+
+let somAtivado = true;
+let contextoAudio = null;
+
+function carregarPreferenciaSom(){
+try{
+const salvo = localStorage.getItem(SOM_STORAGE_KEY);
+somAtivado = salvo === null ? true : salvo === 'true';
+}catch(erro){
+somAtivado = true;
+}
+atualizarIconeSom();
+}
+
+function alternarSom(){
+somAtivado = !somAtivado;
+try{ localStorage.setItem(SOM_STORAGE_KEY, String(somAtivado)); }catch(erro){}
+atualizarIconeSom();
+if(somAtivado) tocarSomEntrega(); // dá um exemplo do som ao ligar
+}
+
+function atualizarIconeSom(){
+const botao = document.getElementById('botaoSom');
+if(botao) botao.innerText = somAtivado ? '🔊' : '🔇';
+}
+
+// Toca um "ding" curtinho sintetizado (sem precisar de arquivo de áudio)
+function tocarSomEntrega(){
+
+if(!somAtivado) return;
+
+try{
+
+if(!contextoAudio){
+contextoAudio = new (window.AudioContext || window.webkitAudioContext)();
+}
+
+const agora = contextoAudio.currentTime;
+
+// Duas notas rápidas subindo, tipo um "ding" de confirmação
+[ {freq:880, inicio:0}, {freq:1318.5, inicio:0.08} ].forEach(nota=>{
+
+const osc = contextoAudio.createOscillator();
+const ganho = contextoAudio.createGain();
+
+osc.type = 'sine';
+osc.frequency.value = nota.freq;
+
+ganho.gain.setValueAtTime(0.0001, agora + nota.inicio);
+ganho.gain.exponentialRampToValueAtTime(0.2, agora + nota.inicio + 0.01);
+ganho.gain.exponentialRampToValueAtTime(0.0001, agora + nota.inicio + 0.25);
+
+osc.connect(ganho);
+ganho.connect(contextoAudio.destination);
+
+osc.start(agora + nota.inicio);
+osc.stop(agora + nota.inicio + 0.3);
+
+});
+
+}catch(erro){
+console.warn("Não foi possível tocar o som de confirmação:", erro);
+}
+
+}
+
 function aplicarSaudacao(){
 
 const hora = new Date().getHours();
 let frases;
 
 if(hora >= 5 && hora < 12){
-frases = ["Bom dia! Vamos nessa 🚀", "Bom dia! Café tomado, rota na mão ☕"];
+frases = [
+"Bom dia! Vamos nessa 🚀",
+"Bom dia! Café tomado, rota na mão ☕",
+"Bora começar antes que o sol esquente 🌤️",
+"Dia novo, rota nova. Foco no trajeto 🧭",
+"Bom dia! Hoje o trânsito tá de boa, aproveita"
+];
 }else if(hora >= 12 && hora < 18){
-frases = ["Boa tarde! Só mais um pouco 💪", "Boa tarde! Bora manter o ritmo 🔥"];
+frases = [
+"Boa tarde! Só mais um pouco 💪",
+"Boa tarde! Bora manter o ritmo 🔥",
+"Metade do dia já foi, segue o fluxo 🚚",
+"Boa tarde! Hidrata e continua firme 💧",
+"Ritmo bom, entregador. Segue assim"
+];
 }else{
-frases = ["Boa noite! Reta final 🌙", "Boa noite! Já deu pra hoje, quase lá 🌙"];
+frases = [
+"Boa noite! Reta final 🌙",
+"Boa noite! Já deu pra hoje, quase lá 🌙",
+"Últimas entregas do dia, capricha 🌆",
+"Boa noite! Farol ligado e foco na via 🚗💡",
+"Fechando o dia com estilo 🌙"
+];
 }
 
 document.getElementById('saudacaoHeader').innerText =
@@ -2291,6 +2461,7 @@ frases[Math.floor(Math.random() * frases.length)];
 }
 
 aplicarSaudacao();
+carregarPreferenciaSom();
 
 // ----------------------------------------------------------------------
 // INICIALIZAÇÃO
