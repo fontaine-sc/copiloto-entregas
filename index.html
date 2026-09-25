@@ -1868,17 +1868,29 @@ return `<span class="badge-status pendente">🟡 Pendente</span>`;
 // pacote que ainda não estiver com ocorrência registrada individualmente
 // - assim não sobrescreve uma exceção que você já marcou pacote a pacote.
 function marcarEntregue(id){
+
 const grupo = encontrarGrupo(id);
 if(!grupo) return;
+
+let algumPacoteMudou = false;
+
 grupo.pacotes.forEach(p => {
-if(p.status !== 'ocorrencia'){
+if(p.status !== 'ocorrencia' && p.status !== 'entregue'){
 p.status = 'entregue';
+algumPacoteMudou = true;
 }
 });
+
 salvarStorage();
 renderizarTudo();
+
+if(algumPacoteMudou){
 mostrarToast(fraseAleatoria(FRASES_ENTREGA), 'sucesso');
 tocarSomEntrega();
+}else{
+mostrarToast('⚠️ Só tem pacote em ocorrência aqui - abra "Mostrar/Ocultar pacotes" e resolva ele direto', 'alerta');
+}
+
 }
 
 // Versão "sem exceção" usada só no painel do mapa: como lá não existe
