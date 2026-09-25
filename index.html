@@ -1881,6 +1881,23 @@ mostrarToast(fraseAleatoria(FRASES_ENTREGA), 'sucesso');
 tocarSomEntrega();
 }
 
+// Versão "sem exceção" usada só no painel do mapa: como lá não existe
+// controle por pacote individual, o botão Entregue precisa resolver
+// TUDO da parada de uma vez, inclusive pacotes já em ocorrência -
+// senão o clique não tem efeito nenhum quando só havia ocorrência ali.
+function marcarEntregueSemExcecao(id){
+const grupo = encontrarGrupo(id);
+if(!grupo) return;
+grupo.pacotes.forEach(p => {
+p.status = 'entregue';
+p.motivo = null;
+});
+salvarStorage();
+renderizarTudo();
+mostrarToast(fraseAleatoria(FRASES_ENTREGA), 'sucesso');
+tocarSomEntrega();
+}
+
 // Alvo do modal de motivo: pode ser a parada inteira ({tipo:'grupo'}) ou
 // um pacote específico dentro dela ({tipo:'pacote', indice}).
 let alvoAguardandoMotivo = null;
@@ -2355,7 +2372,7 @@ abrirInfoMapa(candidatos[estadoCicloClique.indice].id);
 
 // Ações disparadas de dentro do painel inferior do mapa
 function acaoNoPainelInfo(id, acao){
-if(acao === 'entregue') marcarEntregue(id);
+if(acao === 'entregue') marcarEntregueSemExcecao(id);
 if(acao === 'ocorrencia'){ fecharInfoMapa(); abrirModalMotivo(id); return; }
 if(acao === 'desfazer') desfazerStatus(id);
 fecharInfoMapa();
